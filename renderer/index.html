@@ -1,0 +1,340 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Aurora</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; height: 100vh; overflow: hidden;
+      display: flex; flex-direction: column;
+      background: #10131b; color: #e4e9f5;
+      font-family: 'Sora', 'Segoe UI', sans-serif; font-size: 13px;
+      user-select: none;
+    }
+    a { color: #45c7ae; }
+    .mono { font-family: 'JetBrains Mono', Consolas, monospace; }
+
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(190,205,255,0.14); border-radius: 999px;
+      border: 3px solid transparent; background-clip: padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(190,205,255,0.28); background-clip: padding-box; }
+    ::-webkit-scrollbar-corner { background: transparent; }
+
+    .topbar {
+      display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 18px;
+      border-bottom: 1px solid rgba(190,205,255,0.08); flex-shrink: 0;
+    }
+    .topbar .dot { width: 10px; height: 10px; border-radius: 50%; background: #45c7ae; }
+    .topbar .repo { font-size: 12.5px; font-weight: 700; }
+
+    .repo-switch { position: relative; }
+    .repo-btn {
+      display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 7px;
+      background: none; border: none; color: #e4e9f5; cursor: pointer;
+      font-family: 'Sora', 'Segoe UI', sans-serif;
+    }
+    .repo-btn:hover { background: rgba(190,205,255,0.07); }
+    .repo-btn .caret { width: 12px; height: 12px; fill: none; stroke: #667089; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    .repo-menu {
+      position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 320px;
+      background: #1c2231; border: 1px solid rgba(190,205,255,0.14); border-radius: 9px;
+      padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+    }
+    .repo-row {
+      display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; cursor: pointer;
+    }
+    .repo-row:hover { background: rgba(190,205,255,0.07); }
+    .repo-meta { flex-grow: 1; min-width: 0; }
+    .repo-row-name { font-size: 12.5px; font-weight: 700; color: #c9d2e4; }
+    .repo-row.current .repo-row-name { color: #45c7ae; }
+    .repo-row-path { font-size: 10px; color: #667089; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .repo-remove {
+      visibility: hidden; background: none; border: none; color: #667089; cursor: pointer;
+      font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 4px; flex-shrink: 0;
+      font-family: 'Sora', 'Segoe UI', sans-serif;
+    }
+    .repo-row:hover .repo-remove { visibility: visible; }
+    .repo-remove:hover { color: #e0708a; background: rgba(224,112,138,0.12); }
+    .repo-row.add { border-top: 1px solid rgba(190,205,255,0.09); border-radius: 0 0 6px 6px; margin-top: 4px; }
+    .repo-row.add .repo-row-name { color: #9aa5bd; font-weight: 600; }
+    .repo-row.add:hover .repo-row-name { color: #45c7ae; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+      background: rgba(69,199,174,0.12); color: #45c7ae; border: 1px solid rgba(69,199,174,0.35);
+    }
+    .chip.ghost { background: none; color: #9aa5bd; border-color: rgba(190,205,255,0.18); font-weight: 600; }
+    .chip.violet { background: rgba(143,134,255,0.13); color: #8f86ff; border-color: rgba(143,134,255,0.4); }
+
+    .center-toolbar {
+      display: flex; align-items: center; gap: 8px; padding: 10px 18px;
+      border-bottom: 1px solid rgba(190,205,255,0.08); flex-shrink: 0;
+    }
+    .tool-btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: rgba(190,205,255,0.04); border: 1px solid rgba(190,205,255,0.14); border-radius: 7px;
+      padding: 6px 13px; color: #9aa5bd; cursor: pointer;
+      font-family: 'Sora', 'Segoe UI', sans-serif; font-size: 11.5px; font-weight: 600;
+    }
+    .tool-btn svg {
+      width: 13px; height: 13px; fill: none; stroke: currentColor;
+      stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0;
+    }
+    .tool-btn:hover { color: #e4e9f5; border-color: rgba(190,205,255,0.32); background: rgba(190,205,255,0.08); }
+    #toast {
+      font-size: 11px; color: #9aa5bd; margin-left: auto; max-width: 300px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      opacity: 0; transition: opacity 0.2s;
+    }
+    #toast.error { color: #e0708a; }
+    .branch-input {
+      display: none; width: 200px; padding: 5px 10px; border-radius: 6px;
+      background: #1c2231; border: 1px solid rgba(69,199,174,0.4);
+      font-family: 'Sora', 'Segoe UI', sans-serif; font-size: 11.5px; color: #e4e9f5; outline: none;
+    }
+    .branch-input.visible { display: block; }
+    .branch-input::placeholder { color: #667089; }
+    .branch-row.muted { font-weight: 500; color: #7f8aa3; }
+
+    .layout { display: flex; flex-grow: 1; min-height: 0; }
+
+    .sidebar {
+      width: 216px; flex-shrink: 0; background: #141824;
+      border-right: 1px solid rgba(190,205,255,0.08);
+      padding: 16px 12px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto;
+    }
+    .section-title { font-size: 10px; font-weight: 700; letter-spacing: 1.4px; color: #667089; padding: 0 8px; margin-bottom: 6px; }
+    .branch-row {
+      display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px;
+      color: #9aa5bd; font-size: 12px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .branch-row.current { background: rgba(69,199,174,0.1); color: #cdeee5; font-weight: 700; }
+    .branch-row .spacer { flex-grow: 1; }
+    .branch-row .head-dot { width: 7px; height: 7px; border-radius: 50%; background: #45c7ae; flex-shrink: 0; }
+
+    .center { flex-grow: 1; min-width: 0; background: #171b28; display: flex; flex-direction: column; }
+    .commits { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 8px 0; }
+    .commit-row {
+      display: flex; align-items: center; gap: 12px; height: 62px; padding-right: 20px;
+      border-bottom: 1px solid rgba(190,205,255,0.05); cursor: pointer;
+    }
+    .commit-row:hover, .commit-row.open { background: rgba(190,205,255,0.04); }
+    .commit-author {
+      font-size: 11px; color: #9aa5bd; flex-shrink: 0; width: 92px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .commit-detail {
+      padding: 14px 20px 16px 60px; border-bottom: 1px solid rgba(190,205,255,0.05);
+      background: rgba(190,205,255,0.025); display: flex; flex-direction: column; gap: 10px;
+    }
+    .detail-msg { font-size: 12.5px; color: #c9d2e4; white-space: pre-wrap; user-select: text; }
+    .detail-byline { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
+    .detail-author { color: #cdeee5; font-weight: 700; }
+    .detail-email { color: #667089; }
+    .detail-date { color: #667089; margin-left: auto; }
+    .detail-files { display: flex; flex-direction: column; gap: 3px; max-width: 760px; }
+    .detail-file { display: flex; align-items: center; gap: 10px; font-size: 11px; padding: 3px 6px; border-radius: 5px; }
+    .detail-file.diffable { cursor: pointer; }
+    .detail-file.diffable:hover { background: rgba(190,205,255,0.06); }
+    .detail-file .chevron {
+      color: #667089; font-size: 13px; font-weight: 700; width: 12px; text-align: center;
+      flex-shrink: 0; transition: transform 0.15s;
+    }
+    .detail-file.open .chevron { transform: rotate(90deg); color: #45c7ae; }
+    .detail-file.diffable:hover .chevron { color: #45c7ae; }
+    .diff-block {
+      background: #10131b; border: 1px solid rgba(190,205,255,0.07); border-radius: 6px;
+      padding: 10px 12px; margin: 4px 0 8px; font-size: 11px; line-height: 1.55;
+      overflow: auto; max-height: 340px; user-select: text;
+    }
+    .diff-line { white-space: pre; color: #9aa5bd; }
+    .diff-line.add { color: #6ec98f; }
+    .diff-line.del { color: #e0708a; }
+    .diff-line.hunk { color: #8f86ff; }
+    .diff-line.meta { color: #565f75; }
+    .detail-file .spacer { flex-grow: 1; }
+    .detail-path { color: #9aa5bd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stat { color: #667089; width: 44px; text-align: right; flex-shrink: 0; }
+    .stat.add { color: #6ec98f; }
+    .stat.del { color: #e0708a; }
+    .lane { width: 60px; flex-shrink: 0; align-self: stretch; position: relative; }
+    .lane .line { position: absolute; left: 27px; top: 0; bottom: 0; width: 2.5px; background: rgba(190,205,255,0.16); }
+    .lane .line.below { top: 50%; }
+    .lane .line.none { display: none; }
+    .lane .line.half-top { top: 0; bottom: 50%; }
+    .lane .line.dashed {
+      background: repeating-linear-gradient(to bottom, rgba(69,199,174,0.7) 0 3px, transparent 3px 7px);
+    }
+    .lane .node.ghost { border: 2px dashed #45c7ae; background: #171b28; }
+    .commit-row.ghost { cursor: default; }
+    .commit-row.ghost:hover { background: none; }
+    .ghost-msg {
+      flex-grow: 1; min-width: 0; font-size: 13px; color: #9aa5bd;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lane .node {
+      position: absolute; left: 22px; top: 50%; margin-top: -6px;
+      width: 12px; height: 12px; border-radius: 50%;
+      background: #171b28; border: 2.5px solid #45c7ae;
+    }
+    .commit-main { flex-grow: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+    .commit-msg { font-weight: 600; color: #c9d2e4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .avatar {
+      width: 26px; height: 26px; border-radius: 50%; background: #232b3d; color: #45c7ae;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; flex-shrink: 0;
+    }
+    .commit-date { font-size: 11px; color: #667089; flex-shrink: 0; }
+    .commit-hash { font-size: 11px; color: #9aa5bd; width: 62px; flex-shrink: 0; }
+
+    .changes {
+      width: 336px; flex-shrink: 0; background: #141824;
+      border-left: 1px solid rgba(190,205,255,0.08); display: flex; flex-direction: column;
+    }
+    .changes-header { padding: 16px 18px 12px; border-bottom: 1px solid rgba(190,205,255,0.07); flex-shrink: 0; }
+    .changes-header .title { font-size: 12.5px; font-weight: 700; }
+    .changes-header .sub { font-size: 11px; color: #9aa5bd; margin-top: 2px; }
+    .file-lists { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 14px 12px; display: flex; flex-direction: column; gap: 18px; }
+    .file-section-head { display: flex; align-items: center; padding: 0 6px; margin-bottom: 8px; }
+    .file-section-head .label { font-size: 10px; font-weight: 700; letter-spacing: 1.4px; color: #667089; }
+    .file-row {
+      display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 6px;
+      background: #1c2231; margin-bottom: 6px;
+      border: 1px solid transparent; cursor: pointer;
+    }
+    .file-row:hover { background: #232b3d; }
+    .file-row.staged { border-color: rgba(110,201,143,0.3); }
+    .file-row .action {
+      font-size: 15px; font-weight: 700; color: #45c7ae; flex-shrink: 0;
+      width: 16px; text-align: center; opacity: 0;
+    }
+    .file-row:hover .action { opacity: 1; }
+    .all-btn {
+      margin-left: auto; padding: 0; background: none; border: none; cursor: pointer;
+      font-family: 'Sora', 'Segoe UI', sans-serif; font-size: 10px; font-weight: 700;
+      color: #667089; letter-spacing: 0.4px;
+    }
+    .all-btn:hover { color: #45c7ae; }
+    .badge {
+      width: 18px; height: 18px; border-radius: 4px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700;
+      background: rgba(143,134,255,0.14); color: #8f86ff;
+    }
+    .badge.staged { background: rgba(110,201,143,0.16); color: #6ec98f; }
+    .file-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .file-dir { font-size: 10px; color: #667089; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .file-meta { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+    .empty { font-size: 11.5px; color: #667089; padding: 4px 8px; }
+
+    .commit-box {
+      padding: 14px 14px 16px; border-top: 1px solid rgba(190,205,255,0.07);
+      display: flex; flex-direction: column; gap: 10px; flex-shrink: 0;
+    }
+    .commit-box input, .commit-box textarea {
+      padding: 10px 12px; border-radius: 6px; background: #1c2231;
+      border: 1px solid rgba(190,205,255,0.1); font-family: 'Sora', 'Segoe UI', sans-serif;
+      font-size: 12px; color: #e4e9f5; outline: none; resize: none;
+    }
+    .commit-box input::placeholder, .commit-box textarea::placeholder { color: #667089; }
+    .commit-box button {
+      padding: 11px 12px; border-radius: 7px; background: #45c7ae; border: none;
+      color: #0c1f1a; font-family: 'Sora', 'Segoe UI', sans-serif;
+      font-size: 12.5px; font-weight: 700; cursor: pointer;
+    }
+    .commit-box button:disabled { background: #222839; color: #667089; cursor: default; }
+    .commit-error {
+      display: none; font-size: 11px; color: #e0708a; padding: 0 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="repo-switch">
+      <button class="repo-btn" id="repo-btn">
+        <span class="dot"></span>
+        <span class="repo" id="repo-name">…</span>
+        <svg class="caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="repo-menu" id="repo-menu" hidden></div>
+    </div>
+    <span class="chip" id="branch-chip">…</span>
+  </div>
+  <div class="layout">
+    <div class="sidebar">
+      <div>
+        <div class="section-title">LOCAL</div>
+        <div id="branch-list"></div>
+      </div>
+      <div id="remote-section" hidden>
+        <div class="section-title">REMOTE</div>
+        <div id="remote-list"></div>
+      </div>
+      <div id="tag-section" hidden>
+        <div class="section-title">TAGS</div>
+        <div id="tag-list"></div>
+      </div>
+      <div id="stash-section" hidden>
+        <div class="section-title">STASHES</div>
+        <div id="stash-list"></div>
+      </div>
+    </div>
+    <div class="center">
+      <div class="center-toolbar">
+        <button class="tool-btn" id="btn-push">
+          <svg viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+          <span class="lbl">Push</span>
+        </button>
+        <button class="tool-btn" id="btn-pull">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
+          <span class="lbl">Pull</span>
+        </button>
+        <button class="tool-btn" id="btn-fetch">
+          <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+          <span class="lbl">Fetch</span>
+        </button>
+        <button class="tool-btn" id="btn-branch">
+          <svg viewBox="0 0 24 24"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+          <span class="lbl">Branch</span>
+        </button>
+        <button class="tool-btn" id="btn-stash">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v12h14V8"/><path d="M10 12h4"/></svg>
+          <span class="lbl">Stash</span>
+        </button>
+        <input id="branch-name" class="branch-input" placeholder="new branch name, Enter to create" spellcheck="false">
+        <span id="toast"></span>
+      </div>
+      <div class="commits" id="commit-list"></div>
+    </div>
+    <div class="changes">
+      <div class="changes-header">
+        <div class="title">Changes</div>
+        <div class="sub" id="changes-sub"></div>
+      </div>
+      <div class="file-lists">
+        <div>
+          <div class="file-section-head"><span class="label" id="unstaged-label">UNSTAGED</span></div>
+          <div id="unstaged-list"></div>
+        </div>
+        <div>
+          <div class="file-section-head"><span class="label" id="staged-label">STAGED</span></div>
+          <div id="staged-list"></div>
+        </div>
+      </div>
+      <div class="commit-box">
+        <input id="commit-summary" placeholder="Summary (required)">
+        <textarea id="commit-description" rows="2" placeholder="Description"></textarea>
+        <div class="commit-error" id="commit-error"></div>
+        <button id="commit-button" disabled>Commit</button>
+      </div>
+    </div>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>

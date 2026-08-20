@@ -1,0 +1,42 @@
+{
+  "name": "aurora",
+  "version": "0.1.0",
+  "description": "A cozy git client",
+  "main": "main.js",
+  "author": "Ondrej",
+  "scripts": {
+    "start": "electronmon .",
+    "start:once": "electron .",
+    "pack": "electron-builder --win --dir",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "net.triggerz.aurora",
+    "productName": "Aurora",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "deleteAppDataOnUninstall": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
+    "electronmon": "^2.0.4",
+    "playwright-core": "^1.62.1"
+  },
+  "dependencies": {
+    "simple-git": "^3.36.0"
+  }
+}
