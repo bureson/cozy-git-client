@@ -141,8 +141,20 @@
       background: rgba(69,199,174,0.16); color: #45c7ae;
       font-size: 10px; font-weight: 700; line-height: 1.5;
     }
+    .view-toggle {
+      margin-left: auto; display: flex; gap: 2px; padding: 2px; flex-shrink: 0;
+      background: rgba(190,205,255,0.05); border: 1px solid rgba(190,205,255,0.14);
+      border-radius: 7px;
+    }
+    .view-opt {
+      border: none; background: none; color: #667089; cursor: pointer;
+      font-family: 'Sora', 'Segoe UI', sans-serif; font-size: 10.5px; font-weight: 600;
+      padding: 4px 10px; border-radius: 5px;
+    }
+    .view-opt:hover { color: #9aa5bd; }
+    .view-opt.selected { background: rgba(69,199,174,0.15); color: #45c7ae; }
     #toast {
-      font-size: 11px; color: #9aa5bd; margin-left: auto; max-width: 300px;
+      font-size: 11px; color: #9aa5bd; margin-left: 10px; max-width: 300px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       opacity: 0; transition: opacity 0.2s;
     }
@@ -465,6 +477,10 @@
           <span class="lbl">Stash</span>
         </button>
         <input id="branch-name" class="branch-input" placeholder="new branch name, Enter to create" spellcheck="false">
+        <div class="view-toggle" id="view-toggle" title="Which branches the graph shows">
+          <button class="view-opt" data-mode="all">All branches</button>
+          <button class="view-opt" data-mode="current">Current</button>
+        </div>
         <span id="toast"></span>
       </div>
       <div class="commits" id="commit-list">

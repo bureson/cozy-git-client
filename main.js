@@ -481,6 +481,8 @@ app.whenReady().then(() => {
     width: 1440,
     height: 900,
     backgroundColor: '#10131b',
+    // dev-mode window/taskbar icon; packaged builds use the icon embedded in the exe
+    icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js') }
   });
   // the default menu carried these accelerators — keep the useful ones alive

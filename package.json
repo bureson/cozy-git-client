@@ -1,9 +1,10 @@
 {
   "name": "aurora",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A cozy git client",
   "main": "main.js",
   "author": "Ondrej",
+  "repository": "github:bureson/cozy-git-client",
   "scripts": {
     "start": "electronmon .",
     "start:once": "electron .",
@@ -23,11 +24,15 @@
         "portable",
         "nsis"
       ],
-      "signAndEditExecutable": false
+      "icon": "build/icon.ico",
+      "signExecutable": false
     },
     "nsis": {
       "oneClick": true,
-      "deleteAppDataOnUninstall": true
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": {
+      "provider": "github"
     }
   },
   "devDependencies": {

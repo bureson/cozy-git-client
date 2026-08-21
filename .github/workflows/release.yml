@@ -1,0 +1,35 @@
+# Builds the Windows installer + portable exe and attaches them to a DRAFT
+# GitHub release whenever a v* tag is pushed. Review the draft on the Releases
+# page and hit Publish when happy.
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# The tag must match the version in package.json — electron-builder names the
+# release after package.json's version.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build and upload to draft release
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

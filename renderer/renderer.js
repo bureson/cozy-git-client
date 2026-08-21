@@ -304,7 +304,7 @@ let graphState = null;
 const drawGraph = () => {
   const svg = document.getElementById('graph-svg');
   if (!graphState) { svg.replaceChildren(); return; }
-  const { layout, recolor, incomingSet, headHash } = graphState;
+  const { layout, recolor, offHead, headHash } = graphState;
   const rowsWrap = document.getElementById('commit-rows');
   const X = (lane) => GRAPH_X0 + lane * GRAPH_SPACING;
   const Y = (rowEl) => rowEl.offsetTop + rowEl.offsetHeight / 2;
@@ -338,7 +338,8 @@ const drawGraph = () => {
     } else {
       d += ` L ${xV} ${yP - seg * 2} C ${xV} ${yP - seg * 0.4}, ${xP} ${yP - seg * 1.6}, ${xP} ${yP}`;
     }
-    parts.push(`<path d="${d}" stroke="${recolor(color)}" stroke-width="2" fill="none"/>`);
+    const offDash = offHead.has(from) ? ' stroke-dasharray="3 4" opacity="0.8"' : '';
+    parts.push(`<path d="${d}" stroke="${recolor(color)}" stroke-width="2" fill="none"${offDash}/>`);
   });
   const headEl = els.get(headHash);
   const headLaneX = headEl ? X(layout.laneOf.get(headHash)) : X(0);
@@ -357,7 +358,7 @@ const drawGraph = () => {
     const y = Y(rowEl);
     const color = recolor(layout.colorOf.get(hash));
     const isHead = hash === headHash;
-    const dash = incomingSet.has(hash) ? ' stroke-dasharray="2.5 2.5"' : '';
+    const dash = offHead.has(hash) ? ' stroke-dasharray="2.5 2.5"' : '';
     parts.push(`<circle cx="${x}" cy="${y}" r="5" fill="${isHead ? color : '#171b28'}" stroke="${color}" stroke-width="2"${dash}/>`);
   });
   svg.setAttribute('width', graphState.width);
@@ -365,14 +366,40 @@ const drawGraph = () => {
   svg.innerHTML = parts.join('');
 };
 
+// "all": every branch interleaved; "current": only HEAD's history plus incoming
+let viewMode = 'all';
+try { if (localStorage.getItem('aurora-view-mode') === 'current') viewMode = 'current'; }
+catch { /* storage unavailable */ }
+let lastCommitArgs = null;
+
 const renderCommits = (log, incomingHashes, stashes, changedCount) => {
+  lastCommitArgs = [log, incomingHashes, stashes, changedCount];
   const list = document.getElementById('commit-rows');
   list.replaceChildren();
 
-  const layout = layoutGraph(log);
   const isHeadRef = (refs) => (refs || '').split(',')
     .some((ref) => ref.trim() === 'HEAD' || ref.trim().startsWith('HEAD ->'));
   const headHash = (log.find((commit) => isHeadRef(commit.refs)) || {}).hash || null;
+  // reachability from HEAD drives both the "current" filter and dashed rendering —
+  // a linear DAG can stack unmerged tips on HEAD's own lane, where solid reads as "mine"
+  const byHash = new Map(log.map((commit) => [commit.hash, commit]));
+  const reachable = new Set();
+  if (headHash) {
+    const stack = [headHash];
+    while (stack.length > 0) {
+      const hash = stack.pop();
+      if (reachable.has(hash)) continue;
+      reachable.add(hash);
+      const commit = byHash.get(hash);
+      if (commit) stack.push(...commit.parents);
+    }
+  }
+  const incomingSet = new Set(incomingHashes);
+  const shown = viewMode === 'current' && headHash
+    ? log.filter((commit) => reachable.has(commit.hash) || incomingSet.has(commit.hash))
+    : log;
+
+  const layout = layoutGraph(shown);
   // the mockup keeps HEAD's branch teal — swap the palette so it always is
   const headColor = headHash ? layout.colorOf.get(headHash) : GRAPH_COLORS[0];
   const recolor = (color) => color === headColor ? GRAPH_COLORS[0]
@@ -381,7 +408,8 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
   list.style.setProperty('--graph-w', `${width}px`);
   graphState = {
     layout, recolor, headHash, width,
-    incomingSet: new Set(incomingHashes)
+    incomingSet,
+    offHead: new Set(headHash ? shown.filter((commit) => !reachable.has(commit.hash)).map((commit) => commit.hash) : [])
   };
 
   // stashes float on top of the graph, disconnected from the timeline
@@ -411,7 +439,7 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
     list.append(row);
   }
 
-  log.forEach((commit) => {
+  shown.forEach((commit) => {
     const isIncoming = graphState.incomingSet.has(commit.hash);
     const row = el('div', isIncoming ? 'commit-row incoming' : 'commit-row');
     row.dataset.hash = commit.hash;
@@ -658,6 +686,20 @@ const remoteAct = async (label, action, busyEl) => {
     if (busyEl) busyEl.classList.remove('busy');
   }
   await refresh();
+};
+
+const wireViewToggle = () => {
+  const buttons = [...document.querySelectorAll('#view-toggle .view-opt')];
+  const apply = () => buttons.forEach((btn) => btn.classList.toggle('selected', btn.dataset.mode === viewMode));
+  apply();
+  buttons.forEach((btn) => btn.addEventListener('click', () => {
+    if (btn.dataset.mode === viewMode) return;
+    viewMode = btn.dataset.mode;
+    try { localStorage.setItem('aurora-view-mode', viewMode); }
+    catch { /* storage unavailable — the choice still applies this session */ }
+    apply();
+    if (lastCommitArgs) renderCommits(...lastCommitArgs);
+  }));
 };
 
 const wireToolbar = () => {
@@ -1007,6 +1049,7 @@ const wireCollapsibleSections = () => {
 
 wireCommitBox();
 wireToolbar();
+wireViewToggle();
 wireRepoMenu();
 wireAccountsMenu();
 wireErrorModal();
