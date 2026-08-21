@@ -1,6 +1,7 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const simpleGit = require('simple-git');
 
 // test isolation: drivers point userData at a scratch dir so they never touch the real config
@@ -51,12 +52,25 @@ if (argCandidate && argCandidate !== __dirname && isGitRepo(argCandidate)) {
 } else if (config.current && isGitRepo(config.current)) {
   setRepo(config.current);
 } else {
-  setRepo(config.repos.find(isGitRepo) || DEFAULT_REPO);
+  // no valid repo is not fatal — the renderer shows a picker-friendly error state
+  const fallback = config.repos.find(isGitRepo) || (isGitRepo(DEFAULT_REPO) ? DEFAULT_REPO : null);
+  if (fallback) setRepo(fallback);
 }
 
 let win;
 
-ipcMain.handle('repos:list', () => ({ repos: config.repos, current: repoPath }));
+ipcMain.handle('repos:list', () => ({ repos: config.repos, current: repoPath || null }));
+
+// re-checked on every call so "Try again" reflects a fix without restarting
+ipcMain.handle('app:checkGit', () => new Promise((resolve) => {
+  execFile('git', ['--version'], (error, stdout) => {
+    resolve(error ? { ok: false } : { ok: true, version: String(stdout).trim() });
+  });
+}));
+
+ipcMain.handle('app:openExternal', (_event, url) => {
+  if (typeof url === 'string' && url.startsWith('https://')) return shell.openExternal(url);
+});
 
 ipcMain.handle('repos:select', (_event, dir) => {
   if (!isGitRepo(dir)) throw new Error(`Not a git repository: ${dir}`);
@@ -88,6 +102,7 @@ ipcMain.handle('repos:remove', (_event, dir) => {
 });
 
 ipcMain.handle('git:overview', async () => {
+  if (!git) throw new Error('No repository selected — use the repo menu to add one.');
   const [log, status, branch, remote, tags, stashes] = await Promise.all([
     git.log({ maxCount: 30 }).catch(() => ({ all: [] })), // repos with no commits yet
     git.status(),

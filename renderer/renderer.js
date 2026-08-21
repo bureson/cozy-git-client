@@ -358,7 +358,7 @@ const buildRepoMenu = async (menu) => {
       event.stopPropagation();
       await window.aurora.removeRepo(repoDir);
       await buildRepoMenu(menu);
-      await refresh();
+      await boot();
     });
     row.append(meta, removeBtn);
     row.addEventListener('click', async () => {
@@ -368,7 +368,7 @@ const buildRepoMenu = async (menu) => {
       } catch (error) {
         toast(error.message.split('\n').filter(Boolean).pop(), true);
       }
-      await refresh();
+      await boot();
     });
     menu.append(row);
   });
@@ -377,7 +377,7 @@ const buildRepoMenu = async (menu) => {
   addRow.addEventListener('click', async () => {
     menu.hidden = true;
     try {
-      if (await window.aurora.addRepo()) await refresh();
+      if (await window.aurora.addRepo()) await boot();
     } catch (error) {
       toast(error.message.split('\n').filter(Boolean).pop(), true);
     }
@@ -402,12 +402,58 @@ const wireRepoMenu = () => {
   });
 };
 
+// Electron wraps handler rejections as "Error invoking remote method 'x': Error: <msg>"
+const stripIpcPrefix = (message) =>
+  (message || '').replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '').trim();
+
+const fatalIcon = () => {
+  const icon = el('div', 'fatal-icon');
+  icon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M10.3 4.2 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+  return icon;
+};
+
+// Full-pane state for when the overview itself can't load (git missing, broken repo)
+const renderFatal = async (error) => {
+  const box = el('div', 'fatal');
+  const actions = el('div', 'fatal-actions');
+  const gitCheck = await window.aurora.checkGit().catch(() => ({ ok: true }));
+  if (!gitCheck.ok) {
+    box.append(
+      fatalIcon(),
+      el('div', 'fatal-title', 'Git isn’t installed'),
+      el('div', 'fatal-text',
+        'Aurora runs the git command behind the scenes, but couldn’t find it on this computer. '
+        + 'Install Git, then restart Aurora so it picks up the new PATH.')
+    );
+    const download = el('button', 'tool-btn', 'Get Git from git-scm.com');
+    download.addEventListener('click', () => window.aurora.openExternal('https://git-scm.com/downloads'));
+    actions.append(download);
+  } else {
+    box.append(
+      fatalIcon(),
+      el('div', 'fatal-title', 'Couldn’t read this repository'),
+      el('div', 'fatal-text', 'Git ran into a problem while reading the repository:'),
+      el('div', 'fatal-detail mono', stripIpcPrefix(error.message) || 'Unknown error')
+    );
+    const { current } = await window.aurora.listRepos().catch(() => ({ current: null }));
+    if (current) box.append(el('div', 'fatal-path mono', current));
+  }
+  const retry = el('button', 'tool-btn', 'Try again');
+  retry.addEventListener('click', boot);
+  actions.append(retry);
+  box.append(actions);
+  document.getElementById('commit-list').replaceChildren(box);
+};
+
+const boot = () => refresh().catch((error) => renderFatal(error).catch(() => {
+  document.getElementById('commit-list')
+    .replaceChildren(el('div', 'empty', `Failed to read repo: ${error.message}`));
+}));
+
 wireCommitBox();
 wireToolbar();
 wireRepoMenu();
 // keep the view live: poll for outside changes and refresh when the window regains focus
 setInterval(() => refresh().catch(() => {}), 4000);
 window.addEventListener('focus', () => refresh().catch(() => {}));
-refresh().catch((error) => {
-  document.getElementById('commit-list').append(el('div', 'empty', `Failed to read repo: ${error.message}`));
-});
+boot();

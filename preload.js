@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('aurora', {
   push: () => ipcRenderer.invoke('git:push'),
   createBranch: (name) => ipcRenderer.invoke('git:createBranch', name),
   stash: () => ipcRenderer.invoke('git:stash'),
+  checkGit: () => ipcRenderer.invoke('app:checkGit'),
+  openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
   listRepos: () => ipcRenderer.invoke('repos:list'),
   selectRepo: (dir) => ipcRenderer.invoke('repos:select', dir),
   addRepo: () => ipcRenderer.invoke('repos:add'),
