@@ -244,6 +244,13 @@
     .detail-author { color: #cdeee5; font-weight: 700; }
     .detail-email { color: #667089; }
     .detail-date { color: #667089; margin-left: auto; }
+    .detail-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+    .detail-tag-input {
+      width: 260px; padding: 5px 10px; border-radius: 6px;
+      background: #10131b; border: 1px solid rgba(69,199,174,0.4);
+      font-size: 11px; color: #e4e9f5; outline: none;
+    }
+    .detail-tag-input::placeholder { color: #667089; }
     .detail-files { display: flex; flex-direction: column; gap: 3px; max-width: 760px; }
     .detail-file { display: flex; align-items: center; gap: 10px; font-size: 11px; padding: 3px 6px; border-radius: 5px; }
     .detail-file.diffable { cursor: pointer; }
@@ -288,8 +295,9 @@
       display: flex; align-items: center; justify-content: center;
       font-size: 10px; font-weight: 700; flex-shrink: 0;
     }
-    .commit-date { font-size: 10.5px; color: #667089; flex-shrink: 0; }
-    .commit-hash { font-size: 10.5px; color: #9aa5bd; width: 56px; flex-shrink: 0; }
+    .avatar.two { font-size: 8px; letter-spacing: 0.2px; }
+    .commit-date { font-size: 10.5px; color: #667089; width: 52px; text-align: right; flex-shrink: 0; }
+    .commit-hash { font-size: 10.5px; color: #9aa5bd; width: 56px; text-align: right; flex-shrink: 0; }
 
     .splitter {
       width: 5px; margin: 0 -2px; flex-shrink: 0; cursor: col-resize;
@@ -322,6 +330,8 @@
     }
     .file-row:hover .file-act { opacity: 1; }
     .file-act:hover { border-color: rgba(69,199,174,0.55); background: rgba(69,199,174,0.12); }
+    .file-act.discard { color: #9aa5bd; }
+    .file-act.discard:hover { color: #e0708a; border-color: rgba(224,112,138,0.5); background: rgba(224,112,138,0.1); }
     .file-act svg {
       width: 11px; height: 11px; fill: none; stroke: currentColor;
       stroke-width: 2.4; stroke-linecap: round;
@@ -379,6 +389,17 @@
     }
     .fatal-path { font-size: 10.5px; color: #667089; }
     .fatal-actions { display: flex; gap: 8px; margin-top: 14px; }
+    .ctx-menu {
+      position: fixed; z-index: 60; min-width: 180px;
+      background: #1c2231; border: 1px solid rgba(190,205,255,0.14); border-radius: 9px;
+      padding: 5px; box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+    }
+    .ctx-item {
+      padding: 7px 12px; border-radius: 6px; cursor: pointer;
+      font-size: 12px; color: #c9d2e4;
+    }
+    .ctx-item:hover { background: rgba(190,205,255,0.07); }
+    .ctx-item .ctx-hint { color: #667089; font-size: 10.5px; margin-left: 8px; }
     .modal-scrim {
       position: fixed; inset: 0; z-index: 100;
       background: rgba(6,8,14,0.62);
@@ -512,6 +533,7 @@
       </div>
     </div>
   </div>
+  <div class="ctx-menu" id="ctx-menu" hidden></div>
   <div class="modal-scrim" id="error-modal" hidden>
     <div class="modal-card">
       <div class="modal-icon"><svg viewBox="0 0 24 24"><path d="M10.3 4.2 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>

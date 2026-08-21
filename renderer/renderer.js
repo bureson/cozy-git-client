@@ -18,6 +18,22 @@ const stripIpcPrefix = (message) =>
 const errorLine = (error) =>
   stripIpcPrefix(error.message).split('\n').filter(Boolean).pop() || 'git command failed';
 
+const AUTHOR_COLORS = [
+  '#45c7ae', '#8f86ff', '#e5b567', '#e0708a', '#6aa9ff',
+  '#6ec98f', '#d183d1', '#6fcbdc', '#e88e6a', '#a3b0d8'
+];
+
+// assign colors in order of first appearance — distinct until the palette runs out,
+// unlike hashing, which can collide even between two authors
+const assignedColors = new Map();
+const authorColor = (name) => {
+  const key = name || '?';
+  if (!assignedColors.has(key)) {
+    assignedColors.set(key, AUTHOR_COLORS[assignedColors.size % AUTHOR_COLORS.length]);
+  }
+  return assignedColors.get(key);
+};
+
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -131,8 +147,33 @@ const renderSidebar = ({ branch, remoteBranches = [], tags = [], stashes = [] })
   };
   renderGroupedBranches(list, branch.all, buildLocalRow, 'local');
   renderRemoteBranches(remoteBranches, branch.current);
-  renderSideSection('tag-section', 'tag-list', tags);
+  renderTags(tags);
   renderStashes(stashes);
+};
+
+const renderTags = (tags) => {
+  document.getElementById('tag-section').hidden = tags.length === 0;
+  const list = document.getElementById('tag-list');
+  list.replaceChildren();
+  tags.forEach((name) => {
+    const row = el('div', 'branch-row muted stash-row');
+    row.title = name;
+    const pushBtn = el('button', 'stash-btn');
+    pushBtn.title = `Push ${name} to origin`;
+    pushBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>';
+    pushBtn.addEventListener('click', () =>
+      remoteAct(`Push tag ${name}`, () => window.aurora.pushTag(name), pushBtn));
+    const delBtn = el('button', 'stash-btn drop');
+    delBtn.title = 'Delete this tag';
+    delBtn.innerHTML = DROP_ICON;
+    delBtn.addEventListener('click', () => {
+      errorDialog(`Delete tag ${name}?`,
+        'This removes the local tag. If it was already pushed, the tag on origin stays until removed there.',
+        { label: 'Delete tag', run: () => remoteAct(`Delete tag ${name}`, () => window.aurora.deleteTag(name)) });
+    });
+    row.append(el('span', 'stash-msg', name), pushBtn, delBtn);
+    list.append(row);
+  });
 };
 
 const renderRemoteBranches = (remoteBranches, currentBranch) => {
@@ -246,6 +287,28 @@ const renderCommitDetail = async (hash) => {
     fileList.append(row);
   });
   detail.append(fileList);
+  // tags point at a specific commit — offer tagging right here, not just HEAD
+  const actions = el('div', 'detail-actions');
+  const tagBtn = el('button', 'tool-btn', 'Tag this commit…');
+  const tagInput = el('input', 'detail-tag-input mono');
+  tagInput.placeholder = `tag name for ${hash.slice(0, 7)}, Enter to create`;
+  tagInput.spellcheck = false;
+  tagInput.hidden = true;
+  tagBtn.addEventListener('click', () => {
+    tagInput.hidden = !tagInput.hidden;
+    if (!tagInput.hidden) tagInput.focus();
+  });
+  tagInput.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Escape') tagInput.hidden = true;
+    if (event.key !== 'Enter' || !tagInput.value.trim()) return;
+    const name = tagInput.value.trim();
+    tagInput.value = '';
+    remoteAct(`Tag ${name}`, () => window.aurora.createTag(name, hash));
+  });
+  tagInput.addEventListener('click', (event) => event.stopPropagation());
+  actions.append(tagBtn, tagInput);
+  detail.append(actions);
   return detail;
 };
 
@@ -443,12 +506,17 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
     const isIncoming = graphState.incomingSet.has(commit.hash);
     const row = el('div', isIncoming ? 'commit-row incoming' : 'commit-row');
     row.dataset.hash = commit.hash;
-    const color = recolor(layout.colorOf.get(commit.hash));
     const main = el('div', 'commit-main');
     main.append(el('span', 'commit-msg', commit.message));
     if (isIncoming) main.append(el('span', 'chip violet', '↓ incoming'));
     if (commit.refs) main.append(...refChips(commit.refs));
-    const avatar = el('div', 'avatar', (commit.author_name || '?')[0].toUpperCase());
+    // lanes speak branch, avatars speak author — color plus initials ("Ondrej
+    // Bures" → OB) so same-first-letter authors still read apart at a glance
+    const color = authorColor(commit.author_name);
+    const initials = (commit.author_name || '?').split(/\s+/).filter(Boolean)
+      .map((word) => word[0]).slice(0, 2).join('').toUpperCase() || '?';
+    const avatar = el('div', initials.length > 1 ? 'avatar two' : 'avatar', initials);
+    avatar.title = commit.author_name || 'unknown';
     avatar.style.color = color;
     avatar.style.background = `${color}22`;
     row.append(
@@ -458,12 +526,29 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
       el('span', 'commit-date', relTime(commit.date)),
       el('span', 'commit-hash mono', commit.hash.slice(0, 7))
     );
-    row.addEventListener('click', async () => {
+    const revealTagInput = (detail) => {
+      const input = detail.querySelector('.detail-tag-input');
+      if (input) {
+        input.hidden = false;
+        input.focus();
+      }
+    };
+    const toggleDetail = async (focusTag) => {
       const open = list.querySelector('.commit-detail');
-      const wasThisOne = row.nextElementSibling === open;
+      // null === null: without the open check, the LAST row (null nextSibling)
+      // would always look "already open" and never expand
+      const wasThisOne = open !== null && row.nextElementSibling === open;
+      if (wasThisOne) {
+        if (focusTag) {
+          revealTagInput(open);
+          return;
+        }
+        open.remove();
+        row.classList.remove('open');
+        return;
+      }
       if (open) open.remove();
       list.querySelectorAll('.commit-row.open').forEach((r) => r.classList.remove('open'));
-      if (wasThisOne) return;
       row.classList.add('open');
       let detail;
       try {
@@ -473,7 +558,16 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
         detail.append(el('div', 'empty', `Failed to load commit: ${error.message}`));
       }
       row.after(detail);
+      if (focusTag) revealTagInput(detail);
       detail.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
+    row.addEventListener('click', () => toggleDetail(false));
+    row.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      showCtxMenu(event.clientX, event.clientY, [
+        { label: 'Tag this commit…', hint: commit.hash.slice(0, 7), run: () => toggleDetail(true) },
+        { label: 'Copy hash', run: () => navigator.clipboard.writeText(commit.hash).catch(() => {}) }
+      ]);
     });
     list.append(row);
   });
@@ -528,7 +622,25 @@ const renderFileList = (containerId, labelId, label, fileList, staged) => {
       event.stopPropagation();
       act(() => staged ? window.aurora.unstage([file.path]) : window.aurora.stage([file.path]));
     });
-    row.append(el('span', staged ? 'badge staged' : 'badge', file.code), meta, actBtn);
+    row.append(el('span', staged ? 'badge staged' : 'badge', file.code), meta);
+    if (!staged) {
+      const untracked = file.code === 'U';
+      const discardBtn = el('button', 'file-act discard');
+      discardBtn.title = untracked ? 'Delete this untracked file' : 'Discard changes';
+      discardBtn.innerHTML = untracked
+        ? '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13h10l1-13"/></svg>'
+        : '<svg viewBox="0 0 24 24"><path d="M4 10h11a5 5 0 0 1 0 10h-6"/><path d="M8 6l-4 4 4 4"/></svg>';
+      discardBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        errorDialog(untracked ? `Delete ${file.path}?` : `Discard changes to ${file.path}?`,
+          untracked
+            ? 'The file is untracked — deleting it removes it from disk and it cannot be restored.'
+            : 'The file reverts to its staged (or last committed) version. Unstaged edits are lost for good.',
+          { label: untracked ? 'Delete file' : 'Discard', run: () => act(() => window.aurora.discard(file.path, untracked)) });
+      });
+      row.append(discardBtn);
+    }
+    row.append(actBtn);
     row.addEventListener('click', async () => {
       const open = row.nextElementSibling;
       if (open && open.classList.contains('diff-block')) {
@@ -606,6 +718,36 @@ const wireCommitBox = () => {
       descriptionInput.value = '';
     });
   });
+};
+
+// lightweight right-click menu; items = [{label, hint?, run}]
+const showCtxMenu = (x, y, items) => {
+  const menu = document.getElementById('ctx-menu');
+  menu.replaceChildren();
+  items.forEach(({ label, hint, run }) => {
+    const item = el('div', 'ctx-item', label);
+    if (hint) item.append(el('span', 'ctx-hint', hint));
+    item.addEventListener('click', () => {
+      menu.hidden = true;
+      run();
+    });
+    menu.append(item);
+  });
+  menu.hidden = false;
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
+};
+
+const wireCtxMenu = () => {
+  const menu = document.getElementById('ctx-menu');
+  document.addEventListener('click', (event) => {
+    if (!menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+  });
+  document.addEventListener('contextmenu', (event) => {
+    if (!menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+  }, true);
+  window.addEventListener('blur', () => { menu.hidden = true; });
 };
 
 const toast = (message, isError) => {
@@ -711,19 +853,23 @@ const wireToolbar = () => {
   wire('btn-pull', 'Pull', window.aurora.pull);
   wire('btn-push', 'Push', window.aurora.push);
   wire('btn-stash', 'Stash', window.aurora.stash);
-  const nameInput = document.getElementById('branch-name');
-  document.getElementById('btn-branch').addEventListener('click', () => {
-    nameInput.classList.toggle('visible');
-    if (nameInput.classList.contains('visible')) nameInput.focus();
-  });
-  nameInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') nameInput.classList.remove('visible');
-    if (event.key !== 'Enter' || !nameInput.value.trim()) return;
-    const name = nameInput.value.trim();
-    nameInput.value = '';
-    nameInput.classList.remove('visible');
-    remoteAct(`Branch ${name}`, () => window.aurora.createBranch(name));
-  });
+  const wireNameInput = (buttonId, inputId, onSubmit) => {
+    const input = document.getElementById(inputId);
+    document.getElementById(buttonId).addEventListener('click', () => {
+      input.classList.toggle('visible');
+      if (input.classList.contains('visible')) input.focus();
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') input.classList.remove('visible');
+      if (event.key !== 'Enter' || !input.value.trim()) return;
+      const name = input.value.trim();
+      input.value = '';
+      input.classList.remove('visible');
+      onSubmit(name);
+    });
+  };
+  wireNameInput('btn-branch', 'branch-name', (name) =>
+    remoteAct(`Branch ${name}`, () => window.aurora.createBranch(name)));
 };
 
 const buildRepoMenu = async (menu) => {
@@ -1055,6 +1201,7 @@ wireAccountsMenu();
 wireErrorModal();
 wireSplitter();
 wireCollapsibleSections();
+wireCtxMenu();
 // keep the graph aligned when rows shift (detail panels opening, diffs
 // unfolding). ResizeObserver alone misses short lists: min-height clamps the
 // wrapper, so content changes don't resize it — watch the subtree as well.

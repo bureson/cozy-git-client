@@ -220,7 +220,8 @@ const OAUTH_PROVIDERS = {
     label: 'GitHub',
     host: 'github.com',
     clientId: GITHUB_CLIENT_ID,
-    scope: 'repo',
+    // workflow: pushes touching .github/workflows are rejected without it
+    scope: 'repo workflow',
     deviceUrl: () => `${GH_OAUTH_BASE}/login/device/code`,
     tokenUrl: () => `${GH_OAUTH_BASE}/login/oauth/access_token`,
     registerHint: 'Browser sign-in needs a GitHub OAuth client ID. Register one at '
@@ -430,6 +431,11 @@ ipcMain.handle('git:createBranch', (_event, name) => git.checkoutLocalBranch(nam
 // local tracking branch automatically
 ipcMain.handle('git:checkout', (_event, name) => git.checkout(name));
 ipcMain.handle('git:deleteBranch', (_event, name, force) => git.branch([force ? '-D' : '-d', name]));
+// tags a specific commit when hash is given, else HEAD
+ipcMain.handle('git:createTag', (_event, name, hash) => git.tag(hash ? [name, hash] : [name]));
+ipcMain.handle('git:deleteTag', (_event, name) => git.tag(['-d', name]));
+// tags don't ride along with branch pushes — they get their own, auth-aware push
+ipcMain.handle('git:pushTag', (_event, name) => remoteAction((remote) => remote.push(['origin', name])));
 ipcMain.handle('git:stash', () => git.stash(['push', '-u']));
 // index = position in the overview's stash list, which mirrors stash@{n} order
 ipcMain.handle('git:stashPop', (_event, index) => git.stash(['pop', `stash@{${index}}`]));
@@ -471,6 +477,12 @@ ipcMain.handle('git:workingDiff', async (_event, filePath, staged, untracked) =>
 });
 
 ipcMain.handle('git:stage', (_event, paths) => git.add(paths));
+// discard unstaged changes: tracked files revert to the index; untracked files
+// have nothing to revert to — they are deleted from disk
+ipcMain.handle('git:discard', (_event, filePath, untracked) => {
+  if (untracked) return fs.promises.rm(path.join(repoPath, filePath), { force: true });
+  return git.raw(['restore', '--', filePath]);
+});
 // `restore --staged` unstages both modified and newly-added files without touching the worktree
 ipcMain.handle('git:unstage', (_event, paths) => git.raw(['restore', '--staged', '--', ...paths]));
 ipcMain.handle('git:commit', (_event, message) => git.commit(message));
