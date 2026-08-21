@@ -60,6 +60,51 @@
     }
     .repo-row:hover .repo-remove { visibility: visible; }
     .repo-remove:hover { color: #e0708a; background: rgba(224,112,138,0.12); }
+    .topbar-spacer { flex-grow: 1; }
+    .repo-btn .icon {
+      width: 14px; height: 14px; fill: none; stroke: #9aa5bd;
+      stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    }
+    .accounts-menu { left: auto; right: 0; width: 340px; }
+    .account-hint { font-size: 10.5px; color: #667089; line-height: 1.55; padding: 6px 10px; }
+    .account-hint b { color: #9aa5bd; font-weight: 600; }
+    .account-hint.success { color: #45c7ae; font-weight: 600; font-size: 11.5px; }
+    .account-form {
+      display: flex; flex-direction: column; gap: 8px; padding: 10px;
+      border-top: 1px solid rgba(190,205,255,0.09); margin-top: 4px;
+    }
+    .account-flavors { display: flex; gap: 6px; }
+    .flavor-btn {
+      flex-grow: 1; padding: 6px 0; border-radius: 6px; cursor: pointer;
+      background: rgba(190,205,255,0.04); border: 1px solid rgba(190,205,255,0.14);
+      color: #9aa5bd; font-family: 'Sora', 'Segoe UI', sans-serif; font-size: 11.5px; font-weight: 600;
+    }
+    .flavor-btn.selected { color: #45c7ae; border-color: rgba(69,199,174,0.5); background: rgba(69,199,174,0.08); }
+    .account-form input {
+      padding: 8px 10px; border-radius: 6px; background: #10131b;
+      border: 1px solid rgba(190,205,255,0.12); font-family: 'Sora', 'Segoe UI', sans-serif;
+      font-size: 11.5px; color: #e4e9f5; outline: none;
+    }
+    .account-form input::placeholder { color: #667089; }
+    .account-form input:focus { border-color: rgba(69,199,174,0.4); }
+    .account-save {
+      padding: 8px 10px; border-radius: 6px; background: #45c7ae; border: none;
+      color: #0c1f1a; font-family: 'Sora', 'Segoe UI', sans-serif;
+      font-size: 11.5px; font-weight: 700; cursor: pointer;
+    }
+    .account-save:disabled { background: #222839; color: #667089; cursor: default; }
+    .form-divider {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 10px; color: #667089; letter-spacing: 0.4px;
+    }
+    .form-divider::before, .form-divider::after {
+      content: ''; flex-grow: 1; height: 1px; background: rgba(190,205,255,0.12);
+    }
+    .oauth-code {
+      font-size: 20px; letter-spacing: 4px; text-align: center; padding: 12px;
+      background: #10131b; border: 1px solid rgba(69,199,174,0.35); border-radius: 8px;
+      color: #e4e9f5; user-select: text; cursor: copy;
+    }
     .repo-row.add { border-top: 1px solid rgba(190,205,255,0.09); border-radius: 0 0 6px 6px; margin-top: 4px; }
     .repo-row.add .repo-row-name { color: #9aa5bd; font-weight: 600; }
     .repo-row.add:hover .repo-row-name { color: #45c7ae; }
@@ -70,6 +115,7 @@
     }
     .chip.ghost { background: none; color: #9aa5bd; border-color: rgba(190,205,255,0.18); font-weight: 600; }
     .chip.violet { background: rgba(143,134,255,0.13); color: #8f86ff; border-color: rgba(143,134,255,0.4); }
+    .chip.amber { background: rgba(229,181,103,0.12); color: #e5b567; border-color: rgba(229,181,103,0.4); }
 
     .center-toolbar {
       display: flex; align-items: center; gap: 8px; padding: 10px 18px;
@@ -85,7 +131,16 @@
       width: 13px; height: 13px; fill: none; stroke: currentColor;
       stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0;
     }
-    .tool-btn:hover { color: #e4e9f5; border-color: rgba(190,205,255,0.32); background: rgba(190,205,255,0.08); }
+    .tool-btn:hover:not(:disabled) { color: #e4e9f5; border-color: rgba(190,205,255,0.32); background: rgba(190,205,255,0.08); }
+    .tool-btn:disabled { opacity: 0.45; cursor: default; }
+    .tool-btn.busy { opacity: 1; color: #45c7ae; border-color: rgba(69,199,174,0.4); }
+    .tool-btn.busy svg, .stash-btn.busy svg { animation: tool-spin 0.9s linear infinite; }
+    @keyframes tool-spin { to { transform: rotate(360deg); } }
+    .count-badge {
+      min-width: 18px; padding: 1px 6px; border-radius: 999px; text-align: center;
+      background: rgba(69,199,174,0.16); color: #45c7ae;
+      font-size: 10px; font-weight: 700; line-height: 1.5;
+    }
     #toast {
       font-size: 11px; color: #9aa5bd; margin-left: auto; max-width: 300px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -100,6 +155,31 @@
     .branch-input.visible { display: block; }
     .branch-input::placeholder { color: #667089; }
     .branch-row.muted { font-weight: 500; color: #7f8aa3; }
+    .branch-row.clickable { cursor: pointer; }
+    .branch-row.folder { color: #8b96af; gap: 6px; }
+    .branch-row.folder .collapse-chevron { flex-shrink: 0; }
+    .branch-row.folder.collapsed .collapse-chevron { transform: rotate(0deg); }
+    .folder-items {
+      margin-left: 12px; padding-left: 4px;
+      border-left: 1px solid rgba(190,205,255,0.08);
+    }
+    .branch-row.clickable:hover { background: rgba(190,205,255,0.06); color: #c9d2e4; }
+    .branch-row .branch-name, .stash-row .stash-msg {
+      flex-grow: 1; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .stash-btn, .row-btn {
+      visibility: hidden; flex-shrink: 0; padding: 2px; border-radius: 4px;
+      background: none; border: none; color: #667089; cursor: pointer;
+      display: flex; align-items: center;
+    }
+    .stash-row:hover .stash-btn, .branch-row:hover .row-btn { visibility: visible; }
+    .stash-btn:hover, .row-btn:hover { color: #45c7ae; background: rgba(69,199,174,0.12); }
+    .stash-btn.drop:hover, .row-btn.drop:hover { color: #e0708a; background: rgba(224,112,138,0.12); }
+    .stash-btn svg, .row-btn svg {
+      width: 12px; height: 12px; fill: none; stroke: currentColor;
+      stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    }
 
     .layout { display: flex; flex-grow: 1; min-height: 0; }
 
@@ -109,6 +189,15 @@
       padding: 16px 12px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto;
     }
     .section-title { font-size: 10px; font-weight: 700; letter-spacing: 1.4px; color: #667089; padding: 0 8px; margin-bottom: 6px; }
+    .sidebar .section-title {
+      cursor: pointer; display: flex; align-items: center; gap: 6px;
+    }
+    .sidebar .section-title:hover { color: #9aa5bd; }
+    .collapse-chevron {
+      display: inline-block; line-height: 1; font-size: 12px;
+      transform: rotate(90deg); transition: transform 0.15s;
+    }
+    .section-title.collapsed .collapse-chevron { transform: rotate(0deg); }
     .branch-row {
       display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px;
       color: #9aa5bd; font-size: 12px; font-weight: 600;
@@ -119,21 +208,26 @@
     .branch-row .head-dot { width: 7px; height: 7px; border-radius: 50%; background: #45c7ae; flex-shrink: 0; }
 
     .center { flex-grow: 1; min-width: 0; background: #171b28; display: flex; flex-direction: column; }
-    .commits { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 8px 0; }
+    .commits { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 8px 0; position: relative; }
+    #graph-svg { position: absolute; top: 8px; left: 0; pointer-events: none; z-index: 5; }
+    #commit-rows { position: relative; min-height: 100%; }
     .commit-row {
-      display: flex; align-items: center; gap: 12px; height: 62px; padding-right: 20px;
+      display: flex; align-items: center; gap: 10px; height: 44px; padding-right: 16px;
+      padding-left: var(--graph-w, 60px);
       border-bottom: 1px solid rgba(190,205,255,0.05); cursor: pointer;
+      font-size: 12px;
     }
     .commit-row:hover, .commit-row.open { background: rgba(190,205,255,0.04); }
     .commit-author {
-      font-size: 11px; color: #9aa5bd; flex-shrink: 0; width: 92px;
+      font-size: 10.5px; color: #9aa5bd; flex-shrink: 0; width: 84px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    .commit-row .chip { font-size: 10px; padding: 1px 8px; }
     .commit-detail {
-      padding: 14px 20px 16px 60px; border-bottom: 1px solid rgba(190,205,255,0.05);
-      background: rgba(190,205,255,0.025); display: flex; flex-direction: column; gap: 10px;
+      padding: 10px 16px 12px var(--graph-w, 60px); border-bottom: 1px solid rgba(190,205,255,0.05);
+      background: rgba(190,205,255,0.025); display: flex; flex-direction: column; gap: 8px;
     }
-    .detail-msg { font-size: 12.5px; color: #c9d2e4; white-space: pre-wrap; user-select: text; }
+    .detail-msg { font-size: 12px; color: #c9d2e4; white-space: pre-wrap; user-select: text; }
     .detail-byline { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
     .detail-author { color: #cdeee5; font-weight: 700; }
     .detail-email { color: #667089; }
@@ -163,36 +257,33 @@
     .stat { color: #667089; width: 44px; text-align: right; flex-shrink: 0; }
     .stat.add { color: #6ec98f; }
     .stat.del { color: #e0708a; }
-    .lane { width: 60px; flex-shrink: 0; align-self: stretch; position: relative; }
-    .lane .line { position: absolute; left: 27px; top: 0; bottom: 0; width: 2.5px; background: rgba(190,205,255,0.16); }
-    .lane .line.below { top: 50%; }
-    .lane .line.none { display: none; }
-    .lane .line.half-top { top: 0; bottom: 50%; }
-    .lane .line.dashed {
-      background: repeating-linear-gradient(to bottom, rgba(69,199,174,0.7) 0 3px, transparent 3px 7px);
-    }
-    .lane .node.ghost { border: 2px dashed #45c7ae; background: #171b28; }
+    .commit-row.stash-commit { cursor: default; }
+    .commit-row.stash-commit .commit-msg { color: #9aa5bd; }
+    .stash-commit:hover .stash-btn { visibility: visible; }
+    .stash-commit .stash-btn svg { width: 14px; height: 14px; }
+    .commit-row.incoming .commit-msg, .commit-row.incoming .commit-author,
+    .commit-row.incoming .avatar { opacity: 0.65; }
     .commit-row.ghost { cursor: default; }
     .commit-row.ghost:hover { background: none; }
     .ghost-msg {
-      flex-grow: 1; min-width: 0; font-size: 13px; color: #9aa5bd;
+      flex-grow: 1; min-width: 0; font-size: 12px; color: #9aa5bd;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .lane .node {
-      position: absolute; left: 22px; top: 50%; margin-top: -6px;
-      width: 12px; height: 12px; border-radius: 50%;
-      background: #171b28; border: 2.5px solid #45c7ae;
     }
     .commit-main { flex-grow: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
     .commit-msg { font-weight: 600; color: #c9d2e4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .avatar {
-      width: 26px; height: 26px; border-radius: 50%; background: #232b3d; color: #45c7ae;
+      width: 21px; height: 21px; border-radius: 50%; background: #232b3d; color: #45c7ae;
       display: flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: 700; flex-shrink: 0;
+      font-size: 10px; font-weight: 700; flex-shrink: 0;
     }
-    .commit-date { font-size: 11px; color: #667089; flex-shrink: 0; }
-    .commit-hash { font-size: 11px; color: #9aa5bd; width: 62px; flex-shrink: 0; }
+    .commit-date { font-size: 10.5px; color: #667089; flex-shrink: 0; }
+    .commit-hash { font-size: 10.5px; color: #9aa5bd; width: 56px; flex-shrink: 0; }
 
+    .splitter {
+      width: 5px; margin: 0 -2px; flex-shrink: 0; cursor: col-resize;
+      background: transparent; transition: background 0.15s; z-index: 10;
+    }
+    .splitter:hover, .splitter.dragging { background: rgba(69,199,174,0.4); }
     .changes {
       width: 336px; flex-shrink: 0; background: #141824;
       border-left: 1px solid rgba(190,205,255,0.08); display: flex; flex-direction: column;
@@ -210,11 +301,19 @@
     }
     .file-row:hover { background: #232b3d; }
     .file-row.staged { border-color: rgba(110,201,143,0.3); }
-    .file-row .action {
-      font-size: 15px; font-weight: 700; color: #45c7ae; flex-shrink: 0;
-      width: 16px; text-align: center; opacity: 0;
+    .file-row.open { border-color: rgba(190,205,255,0.28); }
+    .file-act {
+      width: 20px; height: 20px; border-radius: 5px; flex-shrink: 0; padding: 0;
+      border: 1px solid rgba(190,205,255,0.16); background: rgba(190,205,255,0.05);
+      color: #45c7ae; cursor: pointer; opacity: 0;
+      display: flex; align-items: center; justify-content: center;
     }
-    .file-row:hover .action { opacity: 1; }
+    .file-row:hover .file-act { opacity: 1; }
+    .file-act:hover { border-color: rgba(69,199,174,0.55); background: rgba(69,199,174,0.12); }
+    .file-act svg {
+      width: 11px; height: 11px; fill: none; stroke: currentColor;
+      stroke-width: 2.4; stroke-linecap: round;
+    }
     .all-btn {
       margin-left: auto; padding: 0; background: none; border: none; cursor: pointer;
       font-family: 'Sora', 'Segoe UI', sans-serif; font-size: 10px; font-weight: 700;
@@ -268,6 +367,34 @@
     }
     .fatal-path { font-size: 10.5px; color: #667089; }
     .fatal-actions { display: flex; gap: 8px; margin-top: 14px; }
+    .modal-scrim {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(6,8,14,0.62);
+      display: flex; align-items: center; justify-content: center;
+    }
+    /* display:flex above would defeat the hidden attribute's display:none */
+    .modal-scrim[hidden] { display: none; }
+    .modal-card {
+      width: 400px; max-width: calc(100vw - 80px);
+      background: #1c2231; border: 1px solid rgba(190,205,255,0.16); border-radius: 10px;
+      padding: 22px 24px 18px; box-shadow: 0 18px 48px rgba(0,0,0,0.55);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .modal-icon svg {
+      width: 26px; height: 26px; fill: none; stroke: #e0708a;
+      stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    }
+    .modal-title { font-size: 14px; font-weight: 700; }
+    .modal-message {
+      font-size: 12px; color: #9aa5bd; line-height: 1.6;
+      white-space: pre-wrap; word-break: break-word; user-select: text;
+    }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+    .modal-primary {
+      padding: 8px 14px; border-radius: 7px; background: #45c7ae; border: none;
+      color: #0c1f1a; font-family: 'Sora', 'Segoe UI', sans-serif;
+      font-size: 11.5px; font-weight: 700; cursor: pointer;
+    }
     .commit-error {
       display: none; font-size: 11px; color: #e0708a; padding: 0 2px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -285,6 +412,14 @@
       <div class="repo-menu" id="repo-menu" hidden></div>
     </div>
     <span class="chip" id="branch-chip">…</span>
+    <span class="topbar-spacer"></span>
+    <div class="repo-switch">
+      <button class="repo-btn" id="accounts-btn" title="Accounts for GitHub / GitLab">
+        <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>
+        <span>Accounts</span>
+      </button>
+      <div class="repo-menu accounts-menu" id="accounts-menu" hidden></div>
+    </div>
   </div>
   <div class="layout">
     <div class="sidebar">
@@ -310,10 +445,12 @@
         <button class="tool-btn" id="btn-push">
           <svg viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
           <span class="lbl">Push</span>
+          <span class="count-badge" id="push-count" hidden></span>
         </button>
         <button class="tool-btn" id="btn-pull">
           <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
           <span class="lbl">Pull</span>
+          <span class="count-badge" id="pull-count" hidden></span>
         </button>
         <button class="tool-btn" id="btn-fetch">
           <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
@@ -330,8 +467,12 @@
         <input id="branch-name" class="branch-input" placeholder="new branch name, Enter to create" spellcheck="false">
         <span id="toast"></span>
       </div>
-      <div class="commits" id="commit-list"></div>
+      <div class="commits" id="commit-list">
+        <svg id="graph-svg"></svg>
+        <div id="commit-rows"></div>
+      </div>
     </div>
+    <div class="splitter" id="changes-splitter" title="Drag to resize"></div>
     <div class="changes">
       <div class="changes-header">
         <div class="title">Changes</div>
@@ -353,6 +494,14 @@
         <div class="commit-error" id="commit-error"></div>
         <button id="commit-button" disabled>Commit</button>
       </div>
+    </div>
+  </div>
+  <div class="modal-scrim" id="error-modal" hidden>
+    <div class="modal-card">
+      <div class="modal-icon"><svg viewBox="0 0 24 24"><path d="M10.3 4.2 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+      <div class="modal-title" id="error-modal-title"></div>
+      <div class="modal-message" id="error-modal-message"></div>
+      <div class="modal-actions" id="error-modal-actions"></div>
     </div>
   </div>
   <script src="renderer.js"></script>

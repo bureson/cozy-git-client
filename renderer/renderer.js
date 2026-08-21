@@ -11,6 +11,13 @@ const relTime = (iso) => {
   return `${weeks}w ago`;
 };
 
+// Electron wraps handler rejections as "Error invoking remote method 'x': Error: <msg>"
+const stripIpcPrefix = (message) =>
+  (message || '').replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '').trim();
+
+const errorLine = (error) =>
+  stripIpcPrefix(error.message).split('\n').filter(Boolean).pop() || 'git command failed';
+
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -37,20 +44,147 @@ const renderSideSection = (sectionId, listId, items) => {
   });
 };
 
+const deleteBranch = async (name, force) => {
+  try {
+    await window.aurora.deleteBranch(name, force);
+    toast(`Deleted ${name} ✓`);
+  } catch (error) {
+    const message = stripIpcPrefix(error.message);
+    if (!force && /not fully merged/i.test(message)) {
+      errorDialog(`${name} isn’t fully merged`,
+        `${message}\n\nForce-deleting loses its unmerged commits (recoverable only via the reflog).`,
+        { label: 'Force delete', run: () => deleteBranch(name, true) });
+    } else {
+      errorDialog('Could not delete branch', message);
+    }
+  }
+  await refresh();
+};
+
+// branches with path prefixes (feature/login, origin/feature/x) group into
+// collapsible folders keyed by everything before the last slash
+let collapsedFolders;
+try { collapsedFolders = new Set(JSON.parse(localStorage.getItem('aurora-branch-folders') || '[]')); }
+catch { collapsedFolders = new Set(); }
+const saveCollapsedFolders = () => {
+  try { localStorage.setItem('aurora-branch-folders', JSON.stringify([...collapsedFolders])); }
+  catch { /* storage unavailable — collapse still works for this session */ }
+};
+
+const renderGroupedBranches = (list, names, buildRow, keyPrefix) => {
+  const groups = new Map();
+  names.forEach((name) => {
+    const cut = name.lastIndexOf('/');
+    const folder = cut === -1 ? '' : name.slice(0, cut);
+    const leaf = cut === -1 ? name : name.slice(cut + 1);
+    if (!groups.has(folder)) groups.set(folder, []);
+    groups.get(folder).push({ name, leaf });
+  });
+  [...groups.keys()].filter(Boolean).sort().forEach((folder) => {
+    const key = `${keyPrefix}:${folder}`;
+    const items = groups.get(folder);
+    const row = el('div', 'branch-row folder clickable');
+    row.append(el('span', 'collapse-chevron', '›'), el('span', 'branch-name', folder));
+    row.title = `${items.length} branch${items.length === 1 ? '' : 'es'}`;
+    const container = el('div', 'folder-items');
+    items.forEach(({ name, leaf }) => container.append(buildRow(name, leaf)));
+    const apply = () => {
+      const isCollapsed = collapsedFolders.has(key);
+      container.style.display = isCollapsed ? 'none' : '';
+      row.classList.toggle('collapsed', isCollapsed);
+    };
+    apply();
+    row.addEventListener('click', () => {
+      if (!collapsedFolders.delete(key)) collapsedFolders.add(key);
+      apply();
+      saveCollapsedFolders();
+    });
+    list.append(row, container);
+  });
+  (groups.get('') || []).forEach(({ name, leaf }) => list.append(buildRow(name, leaf)));
+};
+
 const renderSidebar = ({ branch, remoteBranches = [], tags = [], stashes = [] }) => {
   const list = document.getElementById('branch-list');
   list.replaceChildren();
-  branch.all.forEach((name) => {
-    const row = el('div', name === branch.current ? 'branch-row current' : 'branch-row');
-    row.append(el('span', null, name));
+  const buildLocalRow = (name, leaf) => {
+    const row = el('div', name === branch.current ? 'branch-row current' : 'branch-row clickable');
+    row.append(el('span', 'branch-name', leaf));
     if (name === branch.current) {
       row.append(el('span', 'spacer'), el('span', 'head-dot'));
+    } else {
+      row.title = `Switch to ${name}`;
+      row.append(el('span', 'spacer'));
+      const del = el('button', 'row-btn drop');
+      del.title = 'Delete this branch';
+      del.innerHTML = '<svg viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+      del.addEventListener('click', (event) => {
+        event.stopPropagation();
+        errorDialog(`Delete branch ${name}?`,
+          'Only the branch pointer is removed — commits reachable from other branches stay untouched.',
+          { label: 'Delete branch', run: () => deleteBranch(name, false) });
+      });
+      row.append(del);
+      row.addEventListener('click', () => remoteAct(`Checkout ${name}`, () => window.aurora.checkout(name)));
     }
+    return row;
+  };
+  renderGroupedBranches(list, branch.all, buildLocalRow, 'local');
+  renderRemoteBranches(remoteBranches, branch.current);
+  renderSideSection('tag-section', 'tag-list', tags);
+  renderStashes(stashes);
+};
+
+const renderRemoteBranches = (remoteBranches, currentBranch) => {
+  document.getElementById('remote-section').hidden = remoteBranches.length === 0;
+  const list = document.getElementById('remote-list');
+  list.replaceChildren();
+  const buildRemoteRow = (name, leaf) => {
+    const localName = name.replace(/^[^/]+\//, '');
+    const isCurrent = localName === currentBranch;
+    const row = el('div', isCurrent ? 'branch-row muted' : 'branch-row muted clickable');
+    row.append(el('span', 'branch-name', leaf));
+    row.title = isCurrent ? name : `Checkout ${localName}`;
+    if (!isCurrent) {
+      row.addEventListener('click', () => remoteAct(`Checkout ${localName}`, () => window.aurora.checkout(localName)));
+    }
+    return row;
+  };
+  renderGroupedBranches(list, remoteBranches, buildRemoteRow, 'remote');
+};
+
+const POP_ICON = '<svg viewBox="0 0 24 24"><path d="M12 16V5"/><path d="M8 9l4-4 4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>';
+const DROP_ICON = '<svg viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+
+const stashButtons = (index, message) => {
+  const popBtn = el('button', 'stash-btn');
+  popBtn.title = 'Restore these changes (pop)';
+  popBtn.innerHTML = POP_ICON;
+  popBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    remoteAct('Stash pop', () => window.aurora.stashPop(index), popBtn);
+  });
+  const dropBtn = el('button', 'stash-btn drop');
+  dropBtn.title = 'Delete this stash';
+  dropBtn.innerHTML = DROP_ICON;
+  dropBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    errorDialog('Drop this stash?', `“${message}” will be deleted for good — its changes can’t be restored afterwards.`,
+      { label: 'Drop stash', run: () => remoteAct('Stash drop', () => window.aurora.stashDrop(index)) });
+  });
+  return [popBtn, dropBtn];
+};
+
+const renderStashes = (stashes) => {
+  document.getElementById('stash-section').hidden = stashes.length === 0;
+  const list = document.getElementById('stash-list');
+  list.replaceChildren();
+  stashes.forEach((stash, index) => {
+    const row = el('div', 'branch-row muted stash-row');
+    row.title = stash.message;
+    row.append(el('span', 'stash-msg', stash.message), ...stashButtons(index, stash.message));
     list.append(row);
   });
-  renderSideSection('remote-section', 'remote-list', remoteBranches);
-  renderSideSection('tag-section', 'tag-list', tags);
-  renderSideSection('stash-section', 'stash-list', stashes);
 };
 
 const refChips = (refs) => refs
@@ -58,22 +192,6 @@ const refChips = (refs) => refs
   .map((ref) => ref.replace('HEAD ->', '').trim())
   .filter((ref) => ref && ref !== 'HEAD')
   .map((ref) => el('span', ref.startsWith('origin/') ? 'chip ghost' : 'chip', ref));
-
-const AUTHOR_COLORS = [
-  '#45c7ae', '#8f86ff', '#e5b567', '#e0708a', '#6aa9ff',
-  '#6ec98f', '#d183d1', '#6fcbdc', '#e88e6a', '#a3b0d8'
-];
-
-// assign colors in order of first appearance — distinct until the palette runs out,
-// unlike hashing, which can collide even between two authors
-const assignedColors = new Map();
-const authorColor = (name) => {
-  const key = name || '?';
-  if (!assignedColors.has(key)) {
-    assignedColors.set(key, AUTHOR_COLORS[assignedColors.size % AUTHOR_COLORS.length]);
-  }
-  return assignedColors.get(key);
-};
 
 const renderDiff = (diffText) => {
   const block = el('div', 'diff-block mono');
@@ -131,45 +249,181 @@ const renderCommitDetail = async (hash) => {
   return detail;
 };
 
-const renderCommits = (log, changedCount) => {
-  const list = document.getElementById('commit-list');
+// ---- commit graph: lane layout over the DAG, drawn as one SVG that tracks
+// the real row positions (so open detail panels never desync the lines) ----
+
+const GRAPH_COLORS = ['#45c7ae', '#8f86ff', '#6aa9ff', '#e0708a', '#6ec98f', '#d183d1', '#e88e6a', '#a3b0d8'];
+const GRAPH_X0 = 26;
+const GRAPH_SPACING = 22;
+
+// classic gitk-style walk: each lane carries the parent hash it expects next
+const layoutGraph = (commits) => {
+  const laneOf = new Map();
+  const colorOf = new Map();
+  const edges = []; // {from: child hash, to: parent hash, lane: travel lane, color}
+  const lanes = []; // {expecting, fromHash, color} | null
+  let colorCount = 0;
+  const newColor = () => GRAPH_COLORS[colorCount++ % GRAPH_COLORS.length];
+  const freeLane = () => {
+    const idx = lanes.findIndex((rec) => !rec);
+    return idx === -1 ? lanes.length : idx;
+  };
+  commits.forEach((commit) => {
+    const hits = [];
+    lanes.forEach((rec, i) => { if (rec && rec.expecting === commit.hash) hits.push(i); });
+    let lane, color;
+    if (hits.length > 0) {
+      lane = hits[0];
+      color = lanes[lane].color;
+      hits.forEach((i) => edges.push({ from: lanes[i].fromHash, to: commit.hash, lane: i, color: lanes[i].color }));
+      hits.slice(1).forEach((i) => { lanes[i] = null; });
+    } else {
+      lane = freeLane();
+      color = newColor();
+    }
+    laneOf.set(commit.hash, lane);
+    colorOf.set(commit.hash, color);
+    const [first, ...rest] = commit.parents || [];
+    lanes[lane] = first ? { expecting: first, fromHash: commit.hash, color } : null;
+    rest.forEach((parent) => {
+      const existing = lanes.findIndex((rec) => rec && rec.expecting === parent);
+      if (existing !== -1) {
+        edges.push({ from: commit.hash, to: parent, lane: existing, color: lanes[existing].color });
+        return;
+      }
+      const idx = freeLane();
+      lanes[idx] = { expecting: parent, fromHash: commit.hash, color: newColor() };
+    });
+  });
+  const maxLane = Math.max(0, ...laneOf.values(), ...edges.map((edge) => edge.lane));
+  return { laneOf, colorOf, edges, maxLane };
+};
+
+let graphState = null;
+
+const drawGraph = () => {
+  const svg = document.getElementById('graph-svg');
+  if (!graphState) { svg.replaceChildren(); return; }
+  const { layout, recolor, incomingSet, headHash } = graphState;
+  const rowsWrap = document.getElementById('commit-rows');
+  const X = (lane) => GRAPH_X0 + lane * GRAPH_SPACING;
+  const Y = (rowEl) => rowEl.offsetTop + rowEl.offsetHeight / 2;
+  const els = new Map();
+  let ghostEl = null;
+  const stashEls = [];
+  rowsWrap.querySelectorAll('.commit-row').forEach((rowEl) => {
+    if (rowEl.dataset.hash) els.set(rowEl.dataset.hash, rowEl);
+    else if (rowEl.dataset.kind === 'wip') ghostEl = rowEl;
+    else if (rowEl.dataset.kind === 'stash') stashEls.push(rowEl);
+  });
+  const parts = [];
+  layout.edges.forEach(({ from, to, lane, color }) => {
+    const elC = els.get(from);
+    const elP = els.get(to);
+    if (!elC || !elP) return; // parent beyond the log window
+    const xC = X(layout.laneOf.get(from));
+    const xV = X(lane);
+    const xP = X(layout.laneOf.get(to));
+    const yC = Y(elC);
+    const yP = Y(elP);
+    const seg = Math.min(18, Math.max(8, (yP - yC) / 2 - 2));
+    let d = `M ${xC} ${yC}`;
+    let y = yC;
+    if (xV !== xC) {
+      y = Math.min(yC + seg * 2, yP);
+      d += ` C ${xC} ${yC + seg * 1.6}, ${xV} ${yC + seg * 0.4}, ${xV} ${y}`;
+    }
+    if (xP === xV) {
+      d += ` L ${xV} ${yP}`;
+    } else {
+      d += ` L ${xV} ${yP - seg * 2} C ${xV} ${yP - seg * 0.4}, ${xP} ${yP - seg * 1.6}, ${xP} ${yP}`;
+    }
+    parts.push(`<path d="${d}" stroke="${recolor(color)}" stroke-width="2" fill="none"/>`);
+  });
+  const headEl = els.get(headHash);
+  const headLaneX = headEl ? X(layout.laneOf.get(headHash)) : X(0);
+  if (ghostEl) {
+    const y = Y(ghostEl);
+    if (headEl) {
+      parts.push(`<path d="M ${headLaneX} ${y + 8} L ${headLaneX} ${Y(headEl) - 8}" stroke="#45c7ae" stroke-width="2" fill="none" stroke-dasharray="3 4" opacity="0.75"/>`);
+    }
+    parts.push(`<circle cx="${headLaneX}" cy="${y}" r="5" fill="#171b28" stroke="#45c7ae" stroke-width="2" stroke-dasharray="2.5 2.5"/>`);
+  }
+  stashEls.forEach((rowEl) => {
+    parts.push(`<circle cx="${headLaneX}" cy="${Y(rowEl)}" r="5" fill="#171b28" stroke="#e5b567" stroke-width="2" stroke-dasharray="2.5 2.5"/>`);
+  });
+  els.forEach((rowEl, hash) => {
+    const x = X(layout.laneOf.get(hash));
+    const y = Y(rowEl);
+    const color = recolor(layout.colorOf.get(hash));
+    const isHead = hash === headHash;
+    const dash = incomingSet.has(hash) ? ' stroke-dasharray="2.5 2.5"' : '';
+    parts.push(`<circle cx="${x}" cy="${y}" r="5" fill="${isHead ? color : '#171b28'}" stroke="${color}" stroke-width="2"${dash}/>`);
+  });
+  svg.setAttribute('width', graphState.width);
+  svg.setAttribute('height', Math.max(rowsWrap.offsetHeight, 1));
+  svg.innerHTML = parts.join('');
+};
+
+const renderCommits = (log, incomingHashes, stashes, changedCount) => {
+  const list = document.getElementById('commit-rows');
   list.replaceChildren();
+
+  const layout = layoutGraph(log);
+  const isHeadRef = (refs) => (refs || '').split(',')
+    .some((ref) => ref.trim() === 'HEAD' || ref.trim().startsWith('HEAD ->'));
+  const headHash = (log.find((commit) => isHeadRef(commit.refs)) || {}).hash || null;
+  // the mockup keeps HEAD's branch teal — swap the palette so it always is
+  const headColor = headHash ? layout.colorOf.get(headHash) : GRAPH_COLORS[0];
+  const recolor = (color) => color === headColor ? GRAPH_COLORS[0]
+    : color === GRAPH_COLORS[0] ? headColor : color;
+  const width = GRAPH_X0 * 2 + layout.maxLane * GRAPH_SPACING;
+  list.style.setProperty('--graph-w', `${width}px`);
+  graphState = {
+    layout, recolor, headHash, width,
+    incomingSet: new Set(incomingHashes)
+  };
+
+  // stashes float on top of the graph, disconnected from the timeline
+  stashes.forEach((stash, index) => {
+    const row = el('div', 'commit-row stash-commit');
+    row.dataset.kind = 'stash';
+    const main = el('div', 'commit-main');
+    main.append(el('span', 'commit-msg', stash.message), el('span', 'chip amber', 'stash'));
+    row.append(
+      main,
+      ...stashButtons(index, stash.message),
+      el('span', 'commit-date', stash.date ? relTime(stash.date) : ''),
+      el('span', 'commit-hash mono', `#${index}`)
+    );
+    list.append(row);
+  });
+
   if (changedCount > 0) {
     // ghost commit: what the next commit would be, sitting above HEAD
     const row = el('div', 'commit-row ghost');
-    const lane = el('div', 'lane');
-    lane.append(el('div', log.length > 0 ? 'line below dashed' : 'line none'), el('div', 'node ghost'));
+    row.dataset.kind = 'wip';
     row.append(
-      lane,
       el('span', 'ghost-msg', `${changedCount} file${changedCount === 1 ? '' : 's'} changed — not committed yet`),
       el('span', 'commit-date', 'now'),
       el('span', 'commit-hash mono', 'WIP')
     );
     list.append(row);
   }
-  log.forEach((commit, index) => {
-    const row = el('div', 'commit-row');
-    const color = authorColor(commit.author_name);
-    const lane = el('div', 'lane');
-    // the timeline caps at its topmost node — the ghost when present, else the
-    // newest commit; the ghost-to-HEAD segment is dashed on both rows' halves
-    const node = el('div', index === 0 ? 'node head' : 'node');
-    node.style.borderColor = color;
-    if (index === 0) node.style.background = color;
-    if (index === 0 && changedCount > 0) {
-      lane.append(el('div', 'line half-top dashed'), el('div', 'line below'));
-    } else {
-      lane.append(el('div', index === 0 ? 'line below' : 'line'));
-    }
-    lane.append(node);
+
+  log.forEach((commit) => {
+    const isIncoming = graphState.incomingSet.has(commit.hash);
+    const row = el('div', isIncoming ? 'commit-row incoming' : 'commit-row');
+    row.dataset.hash = commit.hash;
+    const color = recolor(layout.colorOf.get(commit.hash));
     const main = el('div', 'commit-main');
     main.append(el('span', 'commit-msg', commit.message));
+    if (isIncoming) main.append(el('span', 'chip violet', '↓ incoming'));
     if (commit.refs) main.append(...refChips(commit.refs));
     const avatar = el('div', 'avatar', (commit.author_name || '?')[0].toUpperCase());
     avatar.style.color = color;
     avatar.style.background = `${color}22`;
     row.append(
-      lane,
       main,
       avatar,
       el('span', 'commit-author', commit.author_name || 'unknown'),
@@ -195,6 +449,8 @@ const renderCommits = (log, changedCount) => {
     });
     list.append(row);
   });
+
+  drawGraph();
 };
 
 const showError = (message) => {
@@ -209,7 +465,7 @@ const act = async (action) => {
   try {
     await action();
   } catch (error) {
-    showError(error.message.split('\n').pop() || 'git command failed');
+    showError(errorLine(error));
   }
   await refresh();
 };
@@ -230,18 +486,35 @@ const renderFileList = (containerId, labelId, label, fileList, staged) => {
   document.getElementById(labelId).parentElement.append(allBtn);
   fileList.forEach((file) => {
     const row = el('div', staged ? 'file-row staged' : 'file-row');
-    row.title = staged ? 'Click to unstage' : 'Click to stage';
+    row.title = 'Click to view the diff';
     const { name, dir } = splitPath(file.path);
     const meta = el('div', 'file-meta');
     meta.append(el('span', 'file-name', name));
     if (dir) meta.append(el('span', 'file-dir', dir));
-    row.append(
-      el('span', staged ? 'badge staged' : 'badge', file.code),
-      meta,
-      el('span', 'action', staged ? '−' : '+')
-    );
-    row.addEventListener('click', () => {
+    const actBtn = el('button', 'file-act');
+    actBtn.title = staged ? 'Unstage this file' : 'Stage this file';
+    actBtn.innerHTML = staged
+      ? '<svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+      : '<svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+    actBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
       act(() => staged ? window.aurora.unstage([file.path]) : window.aurora.stage([file.path]));
+    });
+    row.append(el('span', staged ? 'badge staged' : 'badge', file.code), meta, actBtn);
+    row.addEventListener('click', async () => {
+      const open = row.nextElementSibling;
+      if (open && open.classList.contains('diff-block')) {
+        open.remove();
+        row.classList.remove('open');
+        return;
+      }
+      try {
+        const diff = await window.aurora.workingDiff(file.path, staged, file.code === 'U');
+        row.after(renderDiff(diff || '(nothing to show)'));
+        row.classList.add('open');
+      } catch (error) {
+        toast(errorLine(error), true);
+      }
     });
     container.append(row);
   });
@@ -269,10 +542,15 @@ const refresh = async () => {
   document.getElementById('repo-name').textContent = repoPath.split(/[\\/]/).pop();
   document.getElementById('branch-chip').textContent = branch.current;
   document.getElementById('changes-sub').textContent = `on ${branch.current}`;
-  document.querySelector('#btn-push .lbl').textContent = status.ahead > 0 ? `Push ↑${status.ahead}` : 'Push';
-  document.querySelector('#btn-pull .lbl').textContent = status.behind > 0 ? `Pull ↓${status.behind}` : 'Pull';
+  const setCount = (id, count) => {
+    const badge = document.getElementById(id);
+    badge.textContent = count;
+    badge.hidden = !(count > 0);
+  };
+  setCount('push-count', status.ahead);
+  setCount('pull-count', status.behind);
   renderSidebar(data);
-  renderCommits(log, status.files.length);
+  renderCommits(log, data.incoming || [], data.stashes || [], status.files.length);
   document.querySelectorAll('.all-btn').forEach((btn) => btn.remove());
   const unstaged = status.files
     .filter((file) => file.working_dir !== ' ' && file.working_dir !== '')
@@ -311,22 +589,86 @@ const toast = (message, isError) => {
   if (message && !isError) toast.timer = setTimeout(() => { node.style.opacity = '0'; }, 4000);
 };
 
-const remoteAct = async (label, action) => {
+const openAccountsPanel = async () => {
+  const menu = document.getElementById('accounts-menu');
+  await buildAccountsMenu(menu);
+  menu.hidden = false;
+};
+
+// Modal error popup; `action` optionally adds a primary button, e.g. "Add account…"
+const errorDialog = (title, message, action) => {
+  const scrim = document.getElementById('error-modal');
+  document.getElementById('error-modal-title').textContent = title;
+  document.getElementById('error-modal-message').textContent = message;
+  const actions = document.getElementById('error-modal-actions');
+  actions.replaceChildren();
+  if (action) {
+    const primary = el('button', 'modal-primary', action.label);
+    primary.addEventListener('click', () => {
+      scrim.hidden = true;
+      action.run();
+    });
+    actions.append(primary);
+  }
+  const close = el('button', 'tool-btn', action ? 'Dismiss' : 'OK');
+  close.addEventListener('click', () => { scrim.hidden = true; });
+  actions.append(close);
+  scrim.hidden = false;
+  (actions.firstChild || close).focus();
+};
+
+const wireErrorModal = () => {
+  const scrim = document.getElementById('error-modal');
+  scrim.addEventListener('click', (event) => {
+    // keep modal clicks away from the menus' outside-click closers, so an
+    // action like "Add account…" can open a panel without it snapping shut
+    event.stopPropagation();
+    if (event.target === scrim) scrim.hidden = true;
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !scrim.hidden) scrim.hidden = true;
+  });
+};
+
+let remoteBusy = false;
+
+const remoteAct = async (label, action, busyEl) => {
+  if (remoteBusy) return; // one remote op at a time — they'd fight over the repo
+  remoteBusy = true;
+  const toolbarButtons = document.querySelectorAll('.center-toolbar .tool-btn');
+  toolbarButtons.forEach((button) => { button.disabled = true; });
+  if (busyEl) busyEl.classList.add('busy');
   toast(`${label}…`);
   try {
     await action();
     toast(`${label} ✓`);
   } catch (error) {
-    toast((error.message || '').split('\n').filter(Boolean).pop() || `${label} failed`, true);
+    toast('');
+    // the popup has room — show git's whole explanation, not just the last line
+    const message = stripIpcPrefix(error.message) || `${label} failed`;
+    // auth failed and no account is set up for this host — lead straight to the fix
+    if (/add an account/i.test(message)) {
+      errorDialog(`${label} needs authentication`, message, { label: 'Add account…', run: openAccountsPanel });
+    } else {
+      errorDialog(`${label} failed`, message);
+    }
+  } finally {
+    remoteBusy = false;
+    toolbarButtons.forEach((button) => { button.disabled = false; });
+    if (busyEl) busyEl.classList.remove('busy');
   }
   await refresh();
 };
 
 const wireToolbar = () => {
-  document.getElementById('btn-fetch').addEventListener('click', () => remoteAct('Fetch', window.aurora.fetch));
-  document.getElementById('btn-pull').addEventListener('click', () => remoteAct('Pull', window.aurora.pull));
-  document.getElementById('btn-push').addEventListener('click', () => remoteAct('Push', window.aurora.push));
-  document.getElementById('btn-stash').addEventListener('click', () => remoteAct('Stash', window.aurora.stash));
+  const wire = (id, label, action) => {
+    const button = document.getElementById(id);
+    button.addEventListener('click', () => remoteAct(label, action, button));
+  };
+  wire('btn-fetch', 'Fetch', window.aurora.fetch);
+  wire('btn-pull', 'Pull', window.aurora.pull);
+  wire('btn-push', 'Push', window.aurora.push);
+  wire('btn-stash', 'Stash', window.aurora.stash);
   const nameInput = document.getElementById('branch-name');
   document.getElementById('btn-branch').addEventListener('click', () => {
     nameInput.classList.toggle('visible');
@@ -366,7 +708,7 @@ const buildRepoMenu = async (menu) => {
       try {
         await window.aurora.selectRepo(repoDir);
       } catch (error) {
-        toast(error.message.split('\n').filter(Boolean).pop(), true);
+        errorDialog('Could not switch repository', errorLine(error));
       }
       await boot();
     });
@@ -379,32 +721,183 @@ const buildRepoMenu = async (menu) => {
     try {
       if (await window.aurora.addRepo()) await boot();
     } catch (error) {
-      toast(error.message.split('\n').filter(Boolean).pop(), true);
+      errorDialog('Could not add repository', errorLine(error));
     }
   });
   menu.append(addRow);
 };
 
-const wireRepoMenu = () => {
-  const button = document.getElementById('repo-btn');
-  const menu = document.getElementById('repo-menu');
+const FLAVOR_DEFAULTS = {
+  github: {
+    host: 'github.com',
+    hint: 'Create a token at github.com → Settings → Developer settings → Personal access tokens. Classic tokens need the repo scope; fine-grained ones need Contents read/write.'
+  },
+  gitlab: {
+    host: 'gitlab.com',
+    hint: 'Create a token under Preferences → Access tokens with the read_repository and write_repository scopes. For self-hosted GitLab, change the host to your instance.'
+  }
+};
+
+const buildAccountForm = (menu) => {
+  const form = el('div', 'account-form');
+  let flavor = 'github';
+  const flavors = el('div', 'account-flavors');
+  const hostInput = el('input');
+  hostInput.placeholder = 'Host';
+  hostInput.spellcheck = false;
+  const userInput = el('input');
+  userInput.placeholder = 'Username (optional)';
+  userInput.spellcheck = false;
+  const tokenInput = el('input');
+  tokenInput.type = 'password';
+  tokenInput.placeholder = 'Personal access token';
+  const hint = el('div', 'account-hint');
+  const flavorButtons = new Map();
+  const setFlavor = (name) => {
+    flavor = name;
+    hostInput.value = FLAVOR_DEFAULTS[name].host;
+    hint.textContent = FLAVOR_DEFAULTS[name].hint;
+    flavorButtons.forEach((btn, key) => btn.classList.toggle('selected', key === name));
+    oauthBtn.textContent = name === 'github' ? 'Sign in with GitHub…' : 'Sign in with GitLab…';
+  };
+  ['github', 'gitlab'].forEach((name) => {
+    const btn = el('button', 'flavor-btn', name === 'github' ? 'GitHub' : 'GitLab');
+    btn.addEventListener('click', () => setFlavor(name));
+    flavorButtons.set(name, btn);
+    flavors.append(btn);
+  });
+  const oauthBtn = el('button', 'account-save');
+  const divider = el('div', 'form-divider', 'or paste a token');
+  oauthBtn.addEventListener('click', async () => {
+    const label = flavor === 'github' ? 'GitHub' : 'GitLab';
+    let start;
+    try {
+      start = await window.aurora.oauthStart(flavor);
+    } catch (error) {
+      errorDialog(`${label} sign-in unavailable`, stripIpcPrefix(error.message));
+      return;
+    }
+    const code = el('div', 'oauth-code mono', start.userCode);
+    code.title = 'Click to copy';
+    code.addEventListener('click', () => navigator.clipboard.writeText(start.userCode).catch(() => {}));
+    const cancel = el('button', 'tool-btn', 'Cancel');
+    cancel.addEventListener('click', async () => {
+      await window.aurora.oauthCancel();
+      await buildAccountsMenu(menu);
+    });
+    form.replaceChildren(
+      el('div', 'account-hint', start.codePrefilled
+        ? `Your browser opened ${start.verificationUri} with this code pre-filled — just approve it:`
+        : `Your browser opened ${start.verificationUri} — enter this code there:`),
+      code,
+      el('div', 'account-hint', 'Waiting for you to authorize in the browser…'),
+      cancel
+    );
+    // keep the code on screen while the user is off in the browser — without this,
+    // the first click back in the app closes the dropdown and takes the code with it
+    menu.classList.add('pinned');
+    try {
+      const check = await window.aurora.oauthPoll({
+        flavor: start.flavor, deviceCode: start.deviceCode, interval: start.interval, expiresIn: start.expiresIn
+      });
+      if (!check) return; // cancelled
+      toast(check.verified ? `Signed in as ${check.name}` : 'Connected — token saved but not verified', !check.verified);
+      await buildAccountsMenu(menu);
+      // the user is likely still in the browser when this lands — leave a
+      // persistent confirmation in the panel for when they switch back
+      menu.prepend(el('div', 'account-hint success',
+        check.verified ? `✓ Signed in as ${check.name} — you're all set` : '✓ Connected — token saved'));
+    } catch (error) {
+      errorDialog(`${label} sign-in failed`, stripIpcPrefix(error.message));
+      await buildAccountsMenu(menu);
+    }
+  });
+  const save = el('button', 'account-save', 'Save account');
+  save.addEventListener('click', async () => {
+    if (!tokenInput.value.trim() || !hostInput.value.trim()) {
+      toast('A host and a token are needed', true);
+      return;
+    }
+    save.disabled = true;
+    save.textContent = 'Checking…';
+    try {
+      const check = await window.aurora.addAccount({
+        flavor,
+        host: hostInput.value,
+        username: userInput.value,
+        token: tokenInput.value
+      });
+      toast(check.verified ? `Signed in as ${check.name}` : `Saved, but ${check.reason} — the token is untested`, !check.verified);
+      await buildAccountsMenu(menu);
+    } catch (error) {
+      errorDialog('Could not save account', errorLine(error));
+      save.disabled = false;
+      save.textContent = 'Save account';
+    }
+  });
+  setFlavor('github');
+  form.append(flavors, oauthBtn, divider, hostInput, userInput, tokenInput, hint, save);
+  return form;
+};
+
+const buildAccountsMenu = async (menu) => {
+  menu.classList.remove('pinned'); // any rebuild ends the sign-in code view
+  const accounts = await window.aurora.listAccounts();
+  menu.replaceChildren();
+  if (accounts.length === 0) {
+    menu.append(el('div', 'account-hint',
+      'Fetch, pull and push over HTTPS need an account for private repositories. Tokens are stored encrypted on this computer.'));
+  }
+  accounts.forEach((account) => {
+    const row = el('div', 'repo-row');
+    const meta = el('div', 'repo-meta');
+    meta.append(
+      el('div', 'repo-row-name', account.host),
+      el('div', 'repo-row-path', account.verifiedName
+        ? `${account.username} · verified as ${account.verifiedName}`
+        : account.username)
+    );
+    const removeBtn = el('button', 'repo-remove', '×');
+    removeBtn.title = 'Remove this account and its token';
+    removeBtn.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      await window.aurora.removeAccount(account.host);
+      await buildAccountsMenu(menu);
+    });
+    row.append(meta, removeBtn);
+    menu.append(row);
+  });
+  const addRow = el('div', 'repo-row add');
+  addRow.append(el('div', 'repo-row-name', '+ Add account…'));
+  addRow.addEventListener('click', (event) => {
+    // the row is replaced before the outside-click handler checks containment
+    event.stopPropagation();
+    addRow.replaceWith(buildAccountForm(menu));
+  });
+  menu.append(addRow);
+};
+
+const wireDropdown = (buttonId, menuId, builder) => {
+  const button = document.getElementById(buttonId);
+  const menu = document.getElementById(menuId);
   button.addEventListener('click', async (event) => {
     event.stopPropagation();
     if (!menu.hidden) {
       menu.hidden = true;
       return;
     }
-    await buildRepoMenu(menu);
+    await builder(menu);
     menu.hidden = false;
   });
   document.addEventListener('click', (event) => {
-    if (!menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+    if (!menu.hidden && !menu.classList.contains('pinned') && !menu.contains(event.target)) {
+      menu.hidden = true;
+    }
   });
 };
 
-// Electron wraps handler rejections as "Error invoking remote method 'x': Error: <msg>"
-const stripIpcPrefix = (message) =>
-  (message || '').replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '').trim();
+const wireRepoMenu = () => wireDropdown('repo-btn', 'repo-menu', buildRepoMenu);
+const wireAccountsMenu = () => wireDropdown('accounts-btn', 'accounts-menu', buildAccountsMenu);
 
 const fatalIcon = () => {
   const icon = el('div', 'fatal-icon');
@@ -442,17 +935,89 @@ const renderFatal = async (error) => {
   retry.addEventListener('click', boot);
   actions.append(retry);
   box.append(actions);
-  document.getElementById('commit-list').replaceChildren(box);
+  graphState = null;
+  drawGraph();
+  document.getElementById('commit-rows').replaceChildren(box);
 };
 
 const boot = () => refresh().catch((error) => renderFatal(error).catch(() => {
-  document.getElementById('commit-list')
+  document.getElementById('commit-rows')
     .replaceChildren(el('div', 'empty', `Failed to read repo: ${error.message}`));
 }));
+
+// drag handle between the commit list and the changes panel; width survives restarts
+const wireSplitter = () => {
+  const splitter = document.getElementById('changes-splitter');
+  const changes = document.querySelector('.changes');
+  const MIN = 260;
+  const maxWidth = () => Math.max(MIN, window.innerWidth - 500);
+  try {
+    const saved = Number(localStorage.getItem('aurora-changes-width'));
+    if (saved >= MIN) changes.style.width = `${Math.min(saved, maxWidth())}px`;
+  } catch { /* storage unavailable — default width */ }
+  splitter.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+    splitter.classList.add('dragging');
+    const startX = event.clientX;
+    const startWidth = changes.getBoundingClientRect().width;
+    const onMove = (move) => {
+      const width = Math.min(maxWidth(), Math.max(MIN, startWidth + (startX - move.clientX)));
+      changes.style.width = `${width}px`;
+    };
+    const onUp = () => {
+      splitter.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      try {
+        localStorage.setItem('aurora-changes-width', String(Math.round(changes.getBoundingClientRect().width)));
+      } catch { /* storage unavailable */ }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+};
+
+// sidebar sections fold on header click; the collapsed set survives restarts.
+// Collapsing hides the list only — section visibility (empty remote/tags/stash
+// sections) stays with renderSideSection, so the two never fight.
+const wireCollapsibleSections = () => {
+  let collapsed;
+  try { collapsed = new Set(JSON.parse(localStorage.getItem('aurora-collapsed') || '[]')); }
+  catch { collapsed = new Set(); }
+  const save = () => {
+    try { localStorage.setItem('aurora-collapsed', JSON.stringify([...collapsed])); }
+    catch { /* storage unavailable — collapse still works for this session */ }
+  };
+  document.querySelectorAll('.sidebar .section-title').forEach((title) => {
+    const list = title.nextElementSibling;
+    title.prepend(el('span', 'collapse-chevron', '›'));
+    const apply = () => {
+      const isCollapsed = collapsed.has(list.id);
+      list.style.display = isCollapsed ? 'none' : '';
+      title.classList.toggle('collapsed', isCollapsed);
+    };
+    apply();
+    title.addEventListener('click', () => {
+      if (!collapsed.delete(list.id)) collapsed.add(list.id);
+      apply();
+      save();
+    });
+  });
+};
 
 wireCommitBox();
 wireToolbar();
 wireRepoMenu();
+wireAccountsMenu();
+wireErrorModal();
+wireSplitter();
+wireCollapsibleSections();
+// keep the graph aligned when rows shift (detail panels opening, diffs
+// unfolding). ResizeObserver alone misses short lists: min-height clamps the
+// wrapper, so content changes don't resize it — watch the subtree as well.
+new ResizeObserver(() => drawGraph()).observe(document.getElementById('commit-rows'));
+new MutationObserver(() => drawGraph())
+  .observe(document.getElementById('commit-rows'), { childList: true, subtree: true });
 // keep the view live: poll for outside changes and refresh when the window regains focus
 setInterval(() => refresh().catch(() => {}), 4000);
 window.addEventListener('focus', () => refresh().catch(() => {}));
