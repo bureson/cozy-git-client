@@ -234,15 +234,58 @@ const refChips = (refs) => refs
   .filter((ref) => ref && ref !== 'HEAD')
   .map((ref) => el('span', ref.startsWith('origin/') ? 'chip ghost' : 'chip', ref));
 
+// shared changed-span of two line bodies (common prefix/suffix trimmed off)
+const changedRange = (a, b) => {
+  const max = Math.min(a.length, b.length);
+  let pre = 0;
+  while (pre < max && a[pre] === b[pre]) pre += 1;
+  let suf = 0;
+  while (suf < max - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf += 1;
+  if (pre + suf >= Math.max(a.length, b.length)) return null;
+  return { pre, suf };
+};
+
 const renderDiff = (diffText) => {
   const block = el('div', 'diff-block mono');
-  diffText.replace(/\n$/, '').split('\n').forEach((line) => {
-    let cls = 'diff-line';
-    if (/^(diff |index |--- |\+\+\+ |new file|deleted file)/.test(line)) cls += ' meta';
-    else if (line.startsWith('@@')) cls += ' hunk';
-    else if (line.startsWith('+')) cls += ' add';
-    else if (line.startsWith('-')) cls += ' del';
-    block.append(el('div', cls, line || ' '));
+  const lines = diffText.replace(/\n$/, '').split('\n');
+  const kinds = lines.map((line) => {
+    if (/^(diff |index |--- |\+\+\+ |new file|deleted file)/.test(line)) return 'meta';
+    if (line.startsWith('@@')) return 'hunk';
+    if (line.startsWith('+')) return 'add';
+    if (line.startsWith('-')) return 'del';
+    return '';
+  });
+  // pair each run of removed lines with the added run right after it
+  const ranges = new Array(lines.length).fill(null);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (kinds[i] !== 'del') continue;
+    const delStart = i;
+    while (kinds[i] === 'del') i += 1;
+    const addStart = i;
+    while (kinds[i] === 'add') i += 1;
+    const pairs = Math.min(addStart - delStart, i - addStart);
+    for (let p = 0; p < pairs; p += 1) {
+      const range = changedRange(lines[delStart + p].slice(1), lines[addStart + p].slice(1));
+      ranges[delStart + p] = range;
+      ranges[addStart + p] = range;
+    }
+    i -= 1;
+  }
+  lines.forEach((line, index) => {
+    const cls = `diff-line${kinds[index] ? ` ${kinds[index]}` : ''}`;
+    const range = ranges[index];
+    const node = el('div', cls);
+    if (!range) {
+      node.textContent = line || ' ';
+    } else {
+      const body = line.slice(1);
+      node.append(
+        line[0] + body.slice(0, range.pre),
+        el('span', 'em', body.slice(range.pre, body.length - range.suf)),
+        body.slice(body.length - range.suf)
+      );
+    }
+    block.append(node);
   });
   return block;
 };
