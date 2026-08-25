@@ -233,14 +233,15 @@ const OAUTH_PROVIDERS = {
     label: 'GitLab',
     host: 'gitlab.com',
     clientId: GITLAB_CLIENT_ID,
-    scope: 'read_user read_repository write_repository',
+    // read_api: the CI pipeline display queries the REST API
+    scope: 'read_user read_api read_repository write_repository',
     deviceUrl: () => `${GL_OAUTH_BASE}/oauth/authorize_device`,
     tokenUrl: () => `${GL_OAUTH_BASE}/oauth/token`,
     registerHint: 'Browser sign-in needs a GitLab application ID. Register one at '
       + 'gitlab.com → User settings → Applications: untick "Confidential", pick the '
-      + 'read_user, read_repository and write_repository scopes (redirect URI can be '
-      + 'http://localhost), then set AURORA_GITLAB_CLIENT_ID or fill GITLAB_CLIENT_ID '
-      + 'in main.js. Until then, paste a personal access token instead.'
+      + 'read_user, read_api, read_repository and write_repository scopes (redirect '
+      + 'URI can be http://localhost), then set AURORA_GITLAB_CLIENT_ID or fill '
+      + 'GITLAB_CLIENT_ID in main.js. Until then, paste a personal access token instead.'
   }
 };
 
@@ -344,6 +345,65 @@ const freshToken = async (account) => {
   return data.access_token;
 };
 
+// ---- GitLab CI: pipeline statuses for the commits on screen ----
+
+// origin URL → project path ("group/sub/project") for the API, https or ssh form
+const parseProjectPath = (url) => {
+  if (!url) return null;
+  let match = url.match(/^https?:\/\/(?:[^@/]+@)?[^/:]+\/(.+?)(?:\.git)?\/?$/i);
+  if (!match) match = url.match(/^(?:ssh:\/\/)?(?:[^@]+@)?[^/:]+[:/](.+?)(?:\.git)?\/?$/i);
+  return match ? match[1] : null;
+};
+
+// the renderer polls with its refresh loop (4s) — cache so GitLab sees a request
+// only every ~15s, and cache failures too so a broken API isn't hammered
+let ciCache = { key: null, at: 0, data: null };
+ipcMain.handle('ci:pipelines', async () => {
+  if (!git) return null;
+  try {
+    const remotes = await git.getRemotes(true);
+    const origin = remotes.find((remote) => remote.name === 'origin') || remotes[0];
+    const url = origin && (origin.refs.fetch || origin.refs.push);
+    const remote = parseRemoteHost(url);
+    const project = parseProjectPath(url);
+    const account = remote && project
+      ? accounts.find((acc) => acc.host === remote.host && acc.flavor === 'gitlab') : null;
+    if (!account) return null;
+    const key = `${remote.host}/${project}`;
+    if (ciCache.key === key && Date.now() - ciCache.at < 15000) return ciCache.data;
+    ciCache = { key, at: Date.now(), data: null };
+    const apiBase = remote.host === 'gitlab.com' ? GL_API_BASE : `https://${remote.host}/api/v4`;
+    const headers = { Authorization: `Bearer ${await freshToken(account)}` };
+    const response = await fetch(
+      `${apiBase}/projects/${encodeURIComponent(project)}/pipelines?per_page=60`,
+      { headers, signal: AbortSignal.timeout(8000) }
+    );
+    if (!response.ok) return null;
+    const list = await response.json();
+    const data = list.map(({ id, sha, status, ref, web_url }) => ({ id, sha, status, ref, webUrl: web_url }));
+    // job-level progress for pipelines still moving — top few only, one extra call each
+    await Promise.all(data.filter((pipeline) => pipeline.status === 'running').slice(0, 3).map(async (pipeline) => {
+      try {
+        const jobsResponse = await fetch(
+          `${apiBase}/projects/${encodeURIComponent(project)}/pipelines/${pipeline.id}/jobs?per_page=100`,
+          { headers, signal: AbortSignal.timeout(8000) }
+        );
+        if (!jobsResponse.ok) return;
+        const jobs = await jobsResponse.json();
+        const active = jobs.find((job) => job.status === 'running');
+        pipeline.progress = {
+          done: jobs.filter((job) => ['success', 'failed', 'canceled', 'skipped'].includes(job.status)).length,
+          total: jobs.length,
+          job: active ? active.name : null,
+          stage: active ? active.stage : null
+        };
+      } catch { /* progress is a bonus — the plain dot still renders */ }
+    }));
+    ciCache.data = data;
+    return ciCache.data;
+  } catch { return null; } // CI display is best-effort — never surface as an app error
+});
+
 ipcMain.handle('repos:list', () => ({ repos: config.repos, current: repoPath || null }));
 
 // re-checked on every call so "Try again" reflects a fix without restarting
@@ -352,6 +412,8 @@ ipcMain.handle('app:checkGit', () => new Promise((resolve) => {
     resolve(error ? { ok: false } : { ok: true, version: String(stdout).trim() });
   });
 }));
+
+ipcMain.handle('app:version', () => app.getVersion());
 
 ipcMain.handle('app:openExternal', (_event, url) => {
   if (typeof url === 'string' && url.startsWith('https://')) return shell.openExternal(url);
@@ -440,6 +502,10 @@ ipcMain.handle('git:stash', () => git.stash(['push', '-u']));
 // index = position in the overview's stash list, which mirrors stash@{n} order
 ipcMain.handle('git:stashPop', (_event, index) => git.stash(['pop', `stash@{${index}}`]));
 ipcMain.handle('git:stashDrop', (_event, index) => git.stash(['drop', `stash@{${index}}`]));
+// --include-untracked because the stash button runs `stash push -u`; plain
+// `stash show -p` would silently omit those files (flag needs git >= 2.32)
+ipcMain.handle('git:stashDiff', (_event, index) =>
+  git.raw(['stash', 'show', '-p', '--include-untracked', `stash@{${index}}`]));
 
 ipcMain.handle('git:commitDetail', async (_event, hash) => {
   // \x1f (unit separator) can't appear in author names or messages

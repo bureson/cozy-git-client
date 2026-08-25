@@ -216,14 +216,106 @@ const stashButtons = (index, message) => {
   return [popBtn, dropBtn];
 };
 
+// Stash and working-file diffs take over the center pane (the commit graph
+// hides while one is open). What's on display is tracked so refresh can keep
+// the content live or close the view when its subject goes away.
+let centerDiff = null;
+
+// the row whose diff fills the center pane carries .open in the changes lists
+const markViewedRow = () => {
+  document.querySelectorAll('.file-row.open').forEach((row) => row.classList.remove('open'));
+  if (centerDiff?.kind !== 'file') return;
+  const container = document.getElementById(centerDiff.staged ? 'staged-list' : 'unstaged-list');
+  container.querySelectorAll('.file-row').forEach((row) => {
+    if (row.dataset.path === centerDiff.path) row.classList.add('open');
+  });
+};
+
+const closeDiffView = () => {
+  centerDiff = null;
+  document.getElementById('diff-view').hidden = true;
+  document.getElementById('commit-list').hidden = false;
+  markViewedRow();
+};
+
+const showDiffView = (title, chipText, chipClass, diffText) => {
+  document.getElementById('diff-view-title').textContent = title;
+  const chip = document.getElementById('diff-view-chip');
+  chip.textContent = chipText;
+  chip.className = chipClass;
+  document.getElementById('diff-view-body').replaceChildren(renderDiff(diffText || '(nothing to show)'));
+  document.getElementById('diff-view').hidden = false;
+  document.getElementById('commit-list').hidden = true;
+};
+
+const openStashView = async (index, message) => {
+  if (centerDiff?.kind === 'stash' && centerDiff.index === index) {
+    closeDiffView();
+    return;
+  }
+  try {
+    const diff = await window.aurora.stashDiff(index);
+    centerDiff = { kind: 'stash', index, message };
+    showDiffView(message, 'stash', 'chip amber', diff);
+    markViewedRow();
+  } catch (error) {
+    toast(errorLine(error), true);
+  }
+};
+
+const openFileView = async (path, staged, untracked) => {
+  if (centerDiff?.kind === 'file' && centerDiff.path === path && centerDiff.staged === staged) {
+    closeDiffView();
+    return;
+  }
+  try {
+    const diff = await window.aurora.workingDiff(path, staged, untracked);
+    centerDiff = { kind: 'file', path, staged, untracked };
+    showDiffView(path, staged ? 'staged' : 'unstaged', staged ? 'chip' : 'chip violet', diff);
+    markViewedRow();
+  } catch (error) {
+    toast(errorLine(error), true);
+  }
+};
+
+// A viewed working diff follows the repo: refresh its content, or close the
+// view once the file has left its list (staged away, discarded, committed)
+const syncFileView = (unstaged, staged) => {
+  if (centerDiff?.kind !== 'file') return;
+  const entry = (centerDiff.staged ? staged : unstaged).find((file) => file.path === centerDiff.path);
+  if (!entry) {
+    closeDiffView();
+    return;
+  }
+  centerDiff.untracked = entry.code === 'U';
+  const viewed = centerDiff;
+  window.aurora.workingDiff(viewed.path, viewed.staged, viewed.untracked)
+    .then((diff) => {
+      if (centerDiff !== viewed) return;
+      document.getElementById('diff-view-body').replaceChildren(renderDiff(diff || '(nothing to show)'));
+    })
+    .catch(() => {});
+};
+
+const wireDiffView = () => {
+  document.getElementById('diff-view-back').addEventListener('click', closeDiffView);
+  // registered before wireErrorModal's Esc handler, so a visible modal wins
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || centerDiff === null) return;
+    if (!document.getElementById('error-modal').hidden) return;
+    closeDiffView();
+  });
+};
+
 const renderStashes = (stashes) => {
   document.getElementById('stash-section').hidden = stashes.length === 0;
   const list = document.getElementById('stash-list');
   list.replaceChildren();
   stashes.forEach((stash, index) => {
     const row = el('div', 'branch-row muted stash-row');
-    row.title = stash.message;
+    row.title = `${stash.message} — click to view the diff`;
     row.append(el('span', 'stash-msg', stash.message), ...stashButtons(index, stash.message));
+    row.addEventListener('click', () => openStashView(index, stash.message));
     list.append(row);
   });
 };
@@ -271,12 +363,51 @@ const renderDiff = (diffText) => {
     }
     i -= 1;
   }
+  // multi-file patches (stashes) get a header bar per file so the boundaries
+  // read at a glance; single-file diffs already have their path elsewhere
+  const isFileStart = (line) => line.startsWith('diff --git ');
+  const multiFile = lines.filter(isFileStart).length > 1;
+  // each file gets its own section so its sticky header bar is pushed away by
+  // the next file's bar instead of lingering over it
+  let target = block;
+  let oldNo = 0;
+  let newNo = 0;
+  let inHunk = false;
   lines.forEach((line, index) => {
-    const cls = `diff-line${kinds[index] ? ` ${kinds[index]}` : ''}`;
+    if (multiFile && isFileStart(line)) {
+      const head = el('div', 'diff-file-head');
+      head.append(el('span', 'diff-file-path', line.slice(line.indexOf(' b/') + 3)));
+      const intro = lines.slice(index + 1, index + 4).join('\n');
+      if (/^new file mode/m.test(intro)) head.append(el('span', 'diff-file-badge add', 'new'));
+      else if (/^deleted file mode/m.test(intro)) head.append(el('span', 'diff-file-badge del', 'deleted'));
+      target = el('div', 'diff-file');
+      target.append(head); // the bar replaces the raw `diff --git` line
+      block.append(target);
+      return;
+    }
+    const kind = kinds[index];
+    if (kind === 'hunk') {
+      const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)?/.exec(line);
+      if (header) {
+        oldNo = Number(header[1]);
+        newNo = Number(header[2]);
+        inHunk = true;
+      }
+    }
+    const node = el('div', `diff-line${kind ? ` ${kind}` : ''}`);
+    // old/new line-number gutter; blank for meta/hunk rows and outside hunks
+    let lnOld = '';
+    let lnNew = '';
+    if (inHunk && kind === 'add') lnNew = String(newNo++);
+    else if (inHunk && kind === 'del') lnOld = String(oldNo++);
+    else if (inHunk && kind === '') {
+      lnOld = String(oldNo++);
+      lnNew = String(newNo++);
+    }
+    node.append(el('span', 'ln', lnOld), el('span', 'ln', lnNew));
     const range = ranges[index];
-    const node = el('div', cls);
     if (!range) {
-      node.textContent = line || ' ';
+      node.append(line || ' ');
     } else {
       const body = line.slice(1);
       node.append(
@@ -285,7 +416,7 @@ const renderDiff = (diffText) => {
         body.slice(body.length - range.suf)
       );
     }
-    block.append(node);
+    target.append(node);
   });
   return block;
 };
@@ -522,6 +653,7 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
   stashes.forEach((stash, index) => {
     const row = el('div', 'commit-row stash-commit');
     row.dataset.kind = 'stash';
+    row.title = 'Click to view the diff';
     const main = el('div', 'commit-main');
     main.append(el('span', 'commit-msg', stash.message), el('span', 'chip amber', 'stash'));
     row.append(
@@ -530,6 +662,7 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
       el('span', 'commit-date', stash.date ? relTime(stash.date) : ''),
       el('span', 'commit-hash mono', `#${index}`)
     );
+    row.addEventListener('click', () => openStashView(index, stash.message));
     list.append(row);
   });
 
@@ -537,10 +670,15 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
     // ghost commit: what the next commit would be, sitting above HEAD
     const row = el('div', 'commit-row ghost');
     row.dataset.kind = 'wip';
-    row.append(
+    const main = el('div', 'commit-main');
+    main.append(
       el('span', 'ghost-msg', `${changedCount} file${changedCount === 1 ? '' : 's'} changed — not committed yet`),
+      el('span', 'chip blue', 'WIP')
+    );
+    row.append(
+      main,
       el('span', 'commit-date', 'now'),
-      el('span', 'commit-hash mono', 'WIP')
+      el('span', 'commit-hash mono', '')
     );
     list.append(row);
   }
@@ -551,6 +689,24 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
     row.dataset.hash = commit.hash;
     const main = el('div', 'commit-main');
     main.append(el('span', 'commit-msg', commit.message));
+    const pipeline = pipelineBySha[commit.hash];
+    if (pipeline) {
+      const dot = el('span', `ci-dot ${pipeline.status}`);
+      let ci = dot;
+      let title = `Pipeline ${pipeline.status}${pipeline.ref ? ` on ${pipeline.ref}` : ''}`;
+      if (pipeline.progress) {
+        const { done, total, job, stage } = pipeline.progress;
+        ci = el('span', 'ci-chip');
+        ci.append(dot, el('span', '', job ? `${job} · ${done}/${total}` : `${done}/${total} jobs`));
+        title += ` — ${stage ? `${stage}: ` : ''}${job || 'between jobs'}, ${done} of ${total} jobs done`;
+      }
+      ci.title = `${title} — click to open in GitLab`;
+      ci.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (pipeline.webUrl) window.aurora.openExternal(pipeline.webUrl);
+      });
+      main.append(ci);
+    }
     if (isIncoming) main.append(el('span', 'chip violet', '↓ incoming'));
     if (commit.refs) main.append(...refChips(commit.refs));
     // lanes speak branch, avatars speak author — color plus initials ("Ondrej
@@ -651,6 +807,7 @@ const renderFileList = (containerId, labelId, label, fileList, staged) => {
   document.getElementById(labelId).parentElement.append(allBtn);
   fileList.forEach((file) => {
     const row = el('div', staged ? 'file-row staged' : 'file-row');
+    row.dataset.path = file.path;
     row.title = 'Click to view the diff';
     const { name, dir } = splitPath(file.path);
     const meta = el('div', 'file-meta');
@@ -684,21 +841,7 @@ const renderFileList = (containerId, labelId, label, fileList, staged) => {
       row.append(discardBtn);
     }
     row.append(actBtn);
-    row.addEventListener('click', async () => {
-      const open = row.nextElementSibling;
-      if (open && open.classList.contains('diff-block')) {
-        open.remove();
-        row.classList.remove('open');
-        return;
-      }
-      try {
-        const diff = await window.aurora.workingDiff(file.path, staged, file.code === 'U');
-        row.after(renderDiff(diff || '(nothing to show)'));
-        row.classList.add('open');
-      } catch (error) {
-        toast(errorLine(error), true);
-      }
-    });
+    row.addEventListener('click', () => openFileView(file.path, staged, file.code === 'U'));
     container.append(row);
   });
 };
@@ -715,11 +858,38 @@ const updateCommitButton = () => {
 
 let lastSnapshot = '';
 
+// GitLab pipeline statuses by commit sha — best-effort: empty when the repo has
+// no GitLab account/CI. The main process caches, so polling here is cheap.
+let pipelineBySha = {};
+let pipelineSnapshot = '';
+const refreshPipelines = async () => {
+  const list = await window.aurora.pipelines().catch(() => null);
+  const next = {};
+  // the API answers newest-first — keep the latest pipeline per commit
+  (list || []).forEach((pipeline) => { if (!next[pipeline.sha]) next[pipeline.sha] = pipeline; });
+  const snapshot = JSON.stringify(next);
+  if (snapshot === pipelineSnapshot) return;
+  pipelineSnapshot = snapshot;
+  pipelineBySha = next;
+  if (lastCommitArgs) renderCommits(...lastCommitArgs);
+};
+
 const refresh = async () => {
+  refreshPipelines().catch(() => {});
   const data = await window.aurora.overview();
-  // skip re-rendering (and collapsing open panels) when nothing changed
+  const unstaged = data.status.files
+    .filter((file) => file.working_dir !== ' ' && file.working_dir !== '')
+    .map((file) => ({ path: file.path, code: file.working_dir === '?' ? 'U' : file.working_dir }));
+  const staged = data.status.files
+    .filter((file) => file.index !== ' ' && file.index !== '' && file.index !== '?')
+    .map((file) => ({ path: file.path, code: file.index }));
+  // skip re-rendering (and collapsing open panels) when nothing changed — but
+  // still sync an open diff view: content edits don't move the status snapshot
   const snapshot = JSON.stringify(data);
-  if (snapshot === lastSnapshot) return;
+  if (snapshot === lastSnapshot) {
+    syncFileView(unstaged, staged);
+    return;
+  }
   lastSnapshot = snapshot;
   const { repoPath, log, status, branch } = data;
   document.getElementById('repo-name').textContent = repoPath.split(/[\\/]/).pop();
@@ -734,15 +904,14 @@ const refresh = async () => {
   setCount('pull-count', status.behind);
   renderSidebar(data);
   renderCommits(log, data.incoming || [], data.stashes || [], status.files.length);
+  // the viewed stash may have been popped/dropped (or shifted) — bail out then
+  if (centerDiff?.kind === 'stash'
+    && (data.stashes || [])[centerDiff.index]?.message !== centerDiff.message) closeDiffView();
   document.querySelectorAll('.all-btn').forEach((btn) => btn.remove());
-  const unstaged = status.files
-    .filter((file) => file.working_dir !== ' ' && file.working_dir !== '')
-    .map((file) => ({ path: file.path, code: file.working_dir === '?' ? 'U' : file.working_dir }));
-  const staged = status.files
-    .filter((file) => file.index !== ' ' && file.index !== '' && file.index !== '?')
-    .map((file) => ({ path: file.path, code: file.index }));
   renderFileList('unstaged-list', 'unstaged-label', 'UNSTAGED', unstaged, false);
   renderFileList('staged-list', 'staged-label', 'STAGED', staged, true);
+  syncFileView(unstaged, staged);
+  markViewedRow();
   stagedCount = staged.length;
   updateCommitButton();
 };
@@ -1237,6 +1406,7 @@ const wireCollapsibleSections = () => {
 };
 
 wireCommitBox();
+wireDiffView();
 wireToolbar();
 wireViewToggle();
 wireRepoMenu();
@@ -1254,4 +1424,7 @@ new MutationObserver(() => drawGraph())
 // keep the view live: poll for outside changes and refresh when the window regains focus
 setInterval(() => refresh().catch(() => {}), 4000);
 window.addEventListener('focus', () => refresh().catch(() => {}));
+window.aurora.version()
+  .then((version) => { document.getElementById('app-version').textContent = `v${version}`; })
+  .catch(() => {});
 boot();
