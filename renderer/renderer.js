@@ -337,11 +337,141 @@ const changedRange = (a, b) => {
   return { pre, suf };
 };
 
+// ---- tiny per-line syntax tokenizer for diff code lines. Comments read dim,
+// strings/keywords/numbers each get their own color. Lines tokenize one at a
+// time with a small carried state (open block comment / template literal),
+// reset at every hunk — a hunk can start mid-construct, and guessing wrong
+// would mis-paint the whole rest of the file.
+
+const JS_KEYWORDS = new Set(('break case catch class const continue debugger default delete do else export extends '
+  + 'finally for from function if import in instanceof let new of return static super switch this throw try typeof '
+  + 'var void while with yield async await').split(' '));
+const TS_KEYWORDS = new Set([...JS_KEYWORDS,
+  'interface', 'type', 'enum', 'implements', 'declare', 'readonly', 'namespace',
+  'abstract', 'public', 'private', 'protected', 'keyof', 'satisfies', 'as', 'is', 'override']);
+const JS_LITERALS = new Set(['true', 'false', 'null', 'undefined', 'NaN', 'Infinity']);
+const NO_WORDS = new Set();
+
+// css: no // line comments — they'd eat the tail of url(https://…)
+const DIFF_LANGS = {
+  js: { keywords: JS_KEYWORDS, literals: JS_LITERALS, lineComment: true, backtick: true },
+  ts: { keywords: TS_KEYWORDS, literals: JS_LITERALS, lineComment: true, backtick: true },
+  json: { keywords: NO_WORDS, literals: JS_LITERALS, lineComment: true, backtick: false },
+  css: { keywords: NO_WORDS, literals: NO_WORDS, lineComment: false, backtick: false }
+};
+
+const diffLang = (filePath) => {
+  const ext = filePath.slice(filePath.lastIndexOf('.') + 1).toLowerCase();
+  if (['js', 'jsx', 'mjs', 'cjs'].includes(ext)) return DIFF_LANGS.js;
+  if (['ts', 'tsx'].includes(ext)) return DIFF_LANGS.ts;
+  if (ext === 'json') return DIFF_LANGS.json;
+  if (['css', 'scss', 'less'].includes(ext)) return DIFF_LANGS.css;
+  return null;
+};
+
+// token classes: c comment, s string, k keyword, l literal, n number, f call
+const tokenizeLine = (text, lang, state) => {
+  const tokens = [];
+  const push = (cls, str) => { if (str) tokens.push({ cls, text: str }); };
+  let i = 0;
+  if (state.comment) {
+    const end = text.indexOf('*/');
+    if (end === -1) { push('c', text); return tokens; }
+    push('c', text.slice(0, end + 2));
+    i = end + 2;
+    state.comment = false;
+  } else if (state.template) {
+    let j = 0;
+    while (j < text.length && text[j] !== '`') j += text[j] === '\\' ? 2 : 1;
+    if (j >= text.length) { push('s', text); return tokens; }
+    push('s', text.slice(0, j + 1));
+    i = j + 1;
+    state.template = false;
+  }
+  while (i < text.length) {
+    const ch = text[i];
+    if (lang.lineComment && ch === '/' && text[i + 1] === '/') { push('c', text.slice(i)); break; }
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end === -1) { push('c', text.slice(i)); state.comment = true; break; }
+      push('c', text.slice(i, end + 2));
+      i = end + 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || (ch === '`' && lang.backtick)) {
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch) j += text[j] === '\\' ? 2 : 1;
+      if (j >= text.length) { // unterminated: only templates legally span lines
+        push('s', text.slice(i));
+        if (ch === '`') state.template = true;
+        break;
+      }
+      push('s', text.slice(i, j + 1));
+      i = j + 1;
+      continue;
+    }
+    if (/\d/.test(ch)) {
+      const num = /^(0[xXbBoO][\da-fA-F]+|\d[\d_]*(\.\d+)?([eE][+-]?\d+)?)n?/.exec(text.slice(i))[0];
+      push('n', num);
+      i += num.length;
+      continue;
+    }
+    const word = /^[A-Za-z_$][\w$]*/.exec(text.slice(i));
+    if (word) {
+      const cls = lang.keywords.has(word[0]) ? 'k'
+        : lang.literals.has(word[0]) ? 'l'
+        : /^\s*\(/.test(text.slice(i + word[0].length)) ? 'f' : null;
+      push(cls, word[0]);
+      i += word[0].length;
+      continue;
+    }
+    // plain run: batch everything up to the next char that could start a token
+    let j = i + 1;
+    while (j < text.length && !/[\w$'"`/]/.test(text[j])) j += 1;
+    push(null, text.slice(i, j));
+    i = j;
+  }
+  return tokens;
+};
+
+// lay tokens into the row, wrapping the changed-range slice in the .em span
+const appendTokens = (node, tokens, range, bodyLength) => {
+  const piece = (cls, str) => cls ? el('span', `tok-${cls}`, str) : document.createTextNode(str);
+  if (!range) {
+    tokens.forEach(({ cls, text }) => node.append(piece(cls, text)));
+    return;
+  }
+  const from = range.pre;
+  const to = bodyLength - range.suf;
+  let pos = 0;
+  let em = null; // open .em wrapper — tokens inside the range share one
+  tokens.forEach(({ cls, text }) => {
+    const start = pos;
+    pos += text.length;
+    [[start, Math.min(pos, from), false],
+      [Math.max(start, from), Math.min(pos, to), true],
+      [Math.max(start, to), pos, false]].forEach(([a, b, inEm]) => {
+      if (b <= a) return;
+      const part = piece(cls, text.slice(a - start, b - start));
+      if (!inEm) {
+        node.append(part);
+        em = null;
+        return;
+      }
+      if (!em) {
+        em = el('span', 'em');
+        node.append(em);
+      }
+      em.append(part);
+    });
+  });
+};
+
 const renderDiff = (diffText) => {
   const block = el('div', 'diff-block mono');
   const lines = diffText.replace(/\n$/, '').split('\n');
   const kinds = lines.map((line) => {
-    if (/^(diff |index |--- |\+\+\+ |new file|deleted file)/.test(line)) return 'meta';
+    if (/^(diff |index |--- |\+\+\+ |new file|deleted file|\\)/.test(line)) return 'meta';
     if (line.startsWith('@@')) return 'hunk';
     if (line.startsWith('+')) return 'add';
     if (line.startsWith('-')) return 'del';
@@ -373,7 +503,16 @@ const renderDiff = (diffText) => {
   let oldNo = 0;
   let newNo = 0;
   let inHunk = false;
+  // syntax highlighting keys off the file's extension; del lines tokenize with
+  // the old side's carried state, add lines with the new side's
+  let lang = null;
+  let oldState = {};
+  let newState = {};
   lines.forEach((line, index) => {
+    if (isFileStart(line)) {
+      lang = diffLang(line.slice(line.indexOf(' b/') + 3));
+      inHunk = false;
+    }
     if (multiFile && isFileStart(line)) {
       const head = el('div', 'diff-file-head');
       head.append(el('span', 'diff-file-path', line.slice(line.indexOf(' b/') + 3)));
@@ -392,6 +531,8 @@ const renderDiff = (diffText) => {
         oldNo = Number(header[1]);
         newNo = Number(header[2]);
         inHunk = true;
+        oldState = {};
+        newState = {};
       }
     }
     const node = el('div', `diff-line${kind ? ` ${kind}` : ''}`);
@@ -406,7 +547,14 @@ const renderDiff = (diffText) => {
     }
     node.append(el('span', 'ln', lnOld), el('span', 'ln', lnNew));
     const range = ranges[index];
-    if (!range) {
+    if (lang && inHunk && (kind === '' || kind === 'add' || kind === 'del')) {
+      const body = line.slice(1);
+      const tokens = tokenizeLine(body, lang, kind === 'del' ? oldState : newState);
+      if (kind === '') oldState = { ...newState }; // context advances both sides
+      node.classList.add('hl');
+      node.append(el('span', 'marker', line[0] || ' '));
+      appendTokens(node, tokens, range, body.length);
+    } else if (!range) {
       node.append(line || ' ');
     } else {
       const body = line.slice(1);
@@ -603,6 +751,15 @@ const drawGraph = () => {
   svg.innerHTML = parts.join('');
 };
 
+// the WIP ghost row previews the summary being typed in the commit box, so the
+// upcoming commit reads like a real one before it exists
+let wipChangedCount = 0;
+const wipText = () => {
+  const summary = document.getElementById('commit-summary').value.trim();
+  const files = `${wipChangedCount} file${wipChangedCount === 1 ? '' : 's'} changed`;
+  return summary ? `${summary} — ${files}` : `${files} — not committed yet`;
+};
+
 // "all": every branch interleaved; "current": only HEAD's history plus incoming
 let viewMode = 'all';
 try { if (localStorage.getItem('aurora-view-mode') === 'current') viewMode = 'current'; }
@@ -671,10 +828,10 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
     const row = el('div', 'commit-row ghost');
     row.dataset.kind = 'wip';
     const main = el('div', 'commit-main');
-    main.append(
-      el('span', 'ghost-msg', `${changedCount} file${changedCount === 1 ? '' : 's'} changed — not committed yet`),
-      el('span', 'chip blue', 'WIP')
-    );
+    wipChangedCount = changedCount;
+    const msg = el('span', 'ghost-msg', wipText());
+    msg.id = 'wip-msg';
+    main.append(msg, el('span', 'chip blue', 'WIP'));
     row.append(
       main,
       el('span', 'commit-date', 'now'),
@@ -707,8 +864,17 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
       });
       main.append(ci);
     }
-    if (isIncoming) main.append(el('span', 'chip violet', '↓ incoming'));
-    if (commit.refs) main.append(...refChips(commit.refs));
+    const chips = [];
+    if (isIncoming) chips.push(el('span', 'chip violet', '↓ incoming'));
+    if (commit.refs) chips.push(...refChips(commit.refs));
+    if (chips.length > 0) {
+      // chips live in a capped group so a many-ref commit can't starve the
+      // message of space; hover reveals whatever got truncated
+      const refs = el('span', 'commit-refs');
+      refs.title = chips.map((chip) => chip.textContent).join(', ');
+      refs.append(...chips);
+      main.append(refs);
+    }
     // lanes speak branch, avatars speak author — color plus initials ("Ondrej
     // Bures" → OB) so same-first-letter authors still read apart at a glance
     const color = authorColor(commit.author_name);
@@ -877,12 +1043,15 @@ const refreshPipelines = async () => {
 const refresh = async () => {
   refreshPipelines().catch(() => {});
   const data = await window.aurora.overview();
+  const byPath = (a, b) => a.path.localeCompare(b.path);
   const unstaged = data.status.files
     .filter((file) => file.working_dir !== ' ' && file.working_dir !== '')
-    .map((file) => ({ path: file.path, code: file.working_dir === '?' ? 'U' : file.working_dir }));
+    .map((file) => ({ path: file.path, code: file.working_dir === '?' ? 'U' : file.working_dir }))
+    .sort(byPath);
   const staged = data.status.files
     .filter((file) => file.index !== ' ' && file.index !== '' && file.index !== '?')
-    .map((file) => ({ path: file.path, code: file.index }));
+    .map((file) => ({ path: file.path, code: file.index }))
+    .sort(byPath);
   // skip re-rendering (and collapsing open panels) when nothing changed — but
   // still sync an open diff view: content edits don't move the status snapshot
   const snapshot = JSON.stringify(data);
@@ -919,7 +1088,11 @@ const refresh = async () => {
 const wireCommitBox = () => {
   const summaryInput = document.getElementById('commit-summary');
   const descriptionInput = document.getElementById('commit-description');
-  summaryInput.addEventListener('input', updateCommitButton);
+  summaryInput.addEventListener('input', () => {
+    updateCommitButton();
+    const wip = document.getElementById('wip-msg');
+    if (wip) wip.textContent = wipText();
+  });
   document.getElementById('commit-button').addEventListener('click', () => {
     const summary = summaryInput.value.trim();
     const description = descriptionInput.value.trim();
