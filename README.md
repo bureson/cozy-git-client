@@ -4,7 +4,7 @@ A cozy git client for Windows, built with Electron.
 
 Aurora opens a repository and gives you the essentials in one calm, dark window: a branch graph of the commit history, staging and committing, remote sync with GitHub/GitLab sign-in, and stash, branch, and tag management — without the ceremony of the big clients.
 
-![Aurora showing a repository with a branch graph, stash, and staged changes](docs/screenshot.png)
+![Aurora showing a repository with a branch graph, a stash, and unstaged and staged changes color-coded as new, modified, or deleted](docs/screenshot.png)
 
 ## Features
 
@@ -16,7 +16,7 @@ Aurora opens a repository and gives you the essentials in one calm, dark window:
 - Avatars are color-coded per author with initials; ref chips show branches and tags on their commits.
 
 ### Staging & committing
-- Unstaged and staged files side by side; click a file to see its **diff inline** (including synthesized diffs for untracked files).
+- Unstaged and staged files side by side, each badged by what changed — **new**, **modified**, **deleted**, or **renamed** — with deleted files struck through; click a file to see its **diff inline** (including synthesized diffs for untracked files).
 - Stage/unstage per file with the hover icons or all at once; **discard** unstaged changes (or delete untracked files) with a confirmation.
 - Commit with a summary + optional description; errors surface inline.
 

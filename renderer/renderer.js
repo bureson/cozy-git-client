@@ -957,6 +957,18 @@ const act = async (action) => {
   await refresh();
 };
 
+// git status letter -> badge styling and a human label for the tooltip
+const FILE_KINDS = {
+  A: { kind: 'add', label: 'New file' },
+  U: { kind: 'add', label: 'Untracked file' },
+  M: { kind: 'mod', label: 'Modified' },
+  T: { kind: 'mod', label: 'Type changed' },
+  D: { kind: 'del', label: 'Deleted' },
+  R: { kind: 'ren', label: 'Renamed' },
+  C: { kind: 'ren', label: 'Copied' },
+};
+const fileKind = (code) => FILE_KINDS[code] || { kind: '', label: 'Changed' };
+
 const renderFileList = (containerId, labelId, label, fileList, staged) => {
   document.getElementById(labelId).textContent = `${label} · ${fileList.length}`;
   const container = document.getElementById(containerId);
@@ -972,9 +984,10 @@ const renderFileList = (containerId, labelId, label, fileList, staged) => {
   });
   document.getElementById(labelId).parentElement.append(allBtn);
   fileList.forEach((file) => {
-    const row = el('div', staged ? 'file-row staged' : 'file-row');
+    const { kind, label: kindLabel } = fileKind(file.code);
+    const row = el('div', `file-row${staged ? ' staged' : ''}${kind ? ` ${kind}` : ''}`);
     row.dataset.path = file.path;
-    row.title = 'Click to view the diff';
+    row.title = `${kindLabel} · click to view the diff`;
     const { name, dir } = splitPath(file.path);
     const meta = el('div', 'file-meta');
     meta.append(el('span', 'file-name', name));
@@ -988,7 +1001,9 @@ const renderFileList = (containerId, labelId, label, fileList, staged) => {
       event.stopPropagation();
       act(() => staged ? window.aurora.unstage([file.path]) : window.aurora.stage([file.path]));
     });
-    row.append(el('span', staged ? 'badge staged' : 'badge', file.code), meta);
+    const badge = el('span', `badge${kind ? ` ${kind}` : ''}`, file.code);
+    badge.title = kindLabel;
+    row.append(badge, meta);
     if (!staged) {
       const untracked = file.code === 'U';
       const discardBtn = el('button', 'file-act discard');
