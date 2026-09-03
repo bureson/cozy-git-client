@@ -549,6 +549,14 @@ ipcMain.handle('git:discard', (_event, filePath, untracked) => {
   if (untracked) return fs.promises.rm(path.join(repoPath, filePath), { force: true });
   return git.raw(['restore', '--', filePath]);
 });
+// discard every unstaged change at once: one restore for the tracked files,
+// then the untracked ones are removed from disk
+ipcMain.handle('git:discardAll', async (_event, tracked, untracked) => {
+  if (tracked.length) await git.raw(['restore', '--', ...tracked]);
+  for (const filePath of untracked) {
+    await fs.promises.rm(path.join(repoPath, filePath), { recursive: true, force: true });
+  }
+});
 // `restore --staged` unstages both modified and newly-added files without touching the worktree
 ipcMain.handle('git:unstage', (_event, paths) => git.raw(['restore', '--staged', '--', ...paths]));
 ipcMain.handle('git:commit', (_event, message) => git.commit(message));
@@ -561,8 +569,11 @@ app.whenReady().then(() => {
     backgroundColor: '#10131b',
     // dev-mode window/taskbar icon; packaged builds use the icon embedded in the exe
     icon: path.join(__dirname, 'build', 'icon.ico'),
+    show: false, // shown once maximized, so the small default frame never flashes
     webPreferences: { preload: path.join(__dirname, 'preload.js') }
   });
+  win.maximize();
+  win.show();
   // the default menu carried these accelerators — keep the useful ones alive
   win.webContents.on('before-input-event', (_event, input) => {
     if (input.type !== 'keyDown') return;

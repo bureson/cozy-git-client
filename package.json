@@ -1,6 +1,6 @@
 {
   "name": "aurora",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "A cozy git client",
   "main": "main.js",
   "author": "Ondrej",

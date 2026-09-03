@@ -983,6 +983,22 @@ const renderFileList = (containerId, labelId, label, fileList, staged) => {
     act(() => staged ? window.aurora.unstage(paths) : window.aurora.stage(paths));
   });
   document.getElementById(labelId).parentElement.append(allBtn);
+  if (!staged) {
+    const tracked = fileList.filter((file) => file.code !== 'U').map((file) => file.path);
+    const untracked = fileList.filter((file) => file.code === 'U').map((file) => file.path);
+    const discardAllBtn = el('button', 'all-btn danger', 'discard all');
+    discardAllBtn.title = 'Discard every unstaged change';
+    discardAllBtn.addEventListener('click', () => {
+      const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+      const parts = [];
+      if (tracked.length) parts.push(`${plural(tracked.length, 'tracked file')} revert to the staged (or last committed) version`);
+      if (untracked.length) parts.push(`${plural(untracked.length, 'untracked file')} ${untracked.length === 1 ? 'is' : 'are'} deleted from disk`);
+      errorDialog(`Discard all ${plural(fileList.length, 'unstaged change')}?`,
+        `${parts.join(', and ')}. This cannot be undone.`,
+        { label: 'Discard all', run: () => act(() => window.aurora.discardAll(tracked, untracked)) });
+    });
+    document.getElementById(labelId).parentElement.append(discardAllBtn);
+  }
   fileList.forEach((file) => {
     const { kind, label: kindLabel } = fileKind(file.code);
     const row = el('div', `file-row${staged ? ' staged' : ''}${kind ? ` ${kind}` : ''}`);

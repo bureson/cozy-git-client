@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('aurora', {
   workingDiff: (filePath, staged, untracked) => ipcRenderer.invoke('git:workingDiff', filePath, staged, untracked),
   stage: (paths) => ipcRenderer.invoke('git:stage', paths),
   discard: (filePath, untracked) => ipcRenderer.invoke('git:discard', filePath, untracked),
+  discardAll: (tracked, untracked) => ipcRenderer.invoke('git:discardAll', tracked, untracked),
   unstage: (paths) => ipcRenderer.invoke('git:unstage', paths),
   commit: (message) => ipcRenderer.invoke('git:commit', message),
   fetch: () => ipcRenderer.invoke('git:fetch'),
