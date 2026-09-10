@@ -486,7 +486,11 @@ ipcMain.handle('git:overview', async () => {
 });
 
 ipcMain.handle('git:fetch', () => remoteAction((remote) => remote.fetch()));
-ipcMain.handle('git:pull', () => remoteAction((remote) => remote.pull()));
+// --autostash (GitKraken-style): uncommitted changes are stashed around the
+// pull and re-applied, so WIP that overlaps incoming commits no longer blocks
+// with "would be overwritten by merge". If re-applying conflicts, git keeps the
+// stash and it shows up in the sidebar — nothing is lost. Needs git >= 2.27.
+ipcMain.handle('git:pull', () => remoteAction((remote) => remote.pull(['--autostash'])));
 ipcMain.handle('git:push', () => remoteAction((remote) => remote.push()));
 ipcMain.handle('git:createBranch', (_event, name) => git.checkoutLocalBranch(name));
 // checking out a name that only exists as origin/<name> makes git create the
