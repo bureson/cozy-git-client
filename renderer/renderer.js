@@ -1544,10 +1544,50 @@ const renderFatal = async (error) => {
   document.getElementById('commit-rows').replaceChildren(box);
 };
 
-const boot = () => refresh().catch((error) => renderFatal(error).catch(() => {
-  document.getElementById('commit-rows')
-    .replaceChildren(el('div', 'empty', `Failed to read repo: ${error.message}`));
-}));
+// Fetch in the background when a repo is opened, so incoming commits and the
+// behind badge are current without a click. Quiet on purpose: the Fetch button
+// spins while it runs, and a failure (offline, no remote, expired token) is a
+// toast rather than a blocking dialog — the explicit button still gives the
+// full error popup.
+// Also runs on window focus, throttled: alt-tabbing back and forth shouldn't
+// hammer the remote (or repeat an auth toast every time).
+const AUTO_FETCH_THROTTLE_MS = 15000;
+let lastAutoFetchAt = 0;
+
+const autoFetch = async () => {
+  if (remoteBusy) return;
+  remoteBusy = true;
+  // stamped up front so a failing remote is also throttled, not retried on every focus
+  lastAutoFetchAt = Date.now();
+  const button = document.getElementById('btn-fetch');
+  button.classList.add('busy');
+  try {
+    await window.aurora.fetch();
+  } catch (error) {
+    // git's last line is usually a hint ("…and the repository exists."); the
+    // fatal: line — or failing that the first line — says what actually happened
+    const lines = stripIpcPrefix(error.message).split('\n').map((l) => l.trim()).filter(Boolean);
+    const cause = (lines.find((l) => /^(fatal|error):/i.test(l)) || lines[0] || 'git command failed')
+      .replace(/^(fatal|error):\s*/i, '');
+    toast(`Fetch failed: ${cause}`, true);
+  } finally {
+    remoteBusy = false;
+    button.classList.remove('busy');
+  }
+  // local state may have moved too (a pull from the terminal, an editor save)
+  await refresh().catch(() => {});
+};
+
+const autoFetchIfDue = () =>
+  Date.now() - lastAutoFetchAt >= AUTO_FETCH_THROTTLE_MS ? autoFetch() : refresh().catch(() => {});
+
+// autoFetch never rejects, so the catch below only fires for the initial read
+const boot = () => refresh()
+  .then(autoFetch)
+  .catch((error) => renderFatal(error).catch(() => {
+    document.getElementById('commit-rows')
+      .replaceChildren(el('div', 'empty', `Failed to read repo: ${error.message}`));
+  }));
 
 // drag handle between the commit list and the changes panel; width survives restarts
 const wireSplitter = () => {
@@ -1625,9 +1665,11 @@ wireCtxMenu();
 new ResizeObserver(() => drawGraph()).observe(document.getElementById('commit-rows'));
 new MutationObserver(() => drawGraph())
   .observe(document.getElementById('commit-rows'), { childList: true, subtree: true });
-// keep the view live: poll for outside changes and refresh when the window regains focus
-setInterval(() => refresh().catch(() => {}), 4000);
-window.addEventListener('focus', () => refresh().catch(() => {}));
+// keep the view live: refresh when the window regains focus, and poll gently for
+// outside changes (an editor next to the window) — each tick is a handful of git
+// commands, so keep it slow, and skip it entirely while the window isn't visible
+setInterval(() => { if (!document.hidden) refresh().catch(() => {}); }, 15000);
+window.addEventListener('focus', () => autoFetchIfDue());
 window.aurora.version()
   .then((version) => { document.getElementById('app-version').textContent = `v${version}`; })
   .catch(() => {});
