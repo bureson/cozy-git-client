@@ -259,7 +259,7 @@ const openStashView = async (index, message) => {
     showDiffView(message, 'stash', 'chip amber', diff);
     markViewedRow();
   } catch (error) {
-    toast(errorLine(error), true);
+    toast(errorLine(error), true, stripIpcPrefix(error.message));
   }
 };
 
@@ -274,7 +274,7 @@ const openFileView = async (path, staged, untracked) => {
     showDiffView(path, staged ? 'staged' : 'unstaged', staged ? 'chip' : 'chip violet', diff);
     markViewedRow();
   } catch (error) {
-    toast(errorLine(error), true);
+    toast(errorLine(error), true, stripIpcPrefix(error.message));
   }
 };
 
@@ -1166,13 +1166,23 @@ const wireCtxMenu = () => {
   window.addEventListener('blur', () => { menu.hidden = true; });
 };
 
-const toast = (message, isError) => {
+// `detail` is the full text behind a clipped error toast — shown as a tooltip,
+// and in the error dialog when the toast is clicked
+const toast = (message, isError, detail) => {
   const node = document.getElementById('toast');
   node.textContent = message;
   node.classList.toggle('error', !!isError);
   node.style.opacity = message ? '1' : '0';
+  toast.detail = isError ? (detail || message) : '';
+  node.title = toast.detail;
   clearTimeout(toast.timer);
   if (message && !isError) toast.timer = setTimeout(() => { node.style.opacity = '0'; }, 4000);
+};
+
+const wireToast = () => {
+  document.getElementById('toast').addEventListener('click', () => {
+    if (toast.detail) errorDialog('Error', toast.detail);
+  });
 };
 
 const openAccountsPanel = async () => {
@@ -1569,7 +1579,7 @@ const autoFetch = async () => {
     const lines = stripIpcPrefix(error.message).split('\n').map((l) => l.trim()).filter(Boolean);
     const cause = (lines.find((l) => /^(fatal|error):/i.test(l)) || lines[0] || 'git command failed')
       .replace(/^(fatal|error):\s*/i, '');
-    toast(`Fetch failed: ${cause}`, true);
+    toast(`Fetch failed: ${cause}`, true, lines.join('\n'));
   } finally {
     remoteBusy = false;
     button.classList.remove('busy');
@@ -1656,6 +1666,7 @@ wireViewToggle();
 wireRepoMenu();
 wireAccountsMenu();
 wireErrorModal();
+wireToast();
 wireSplitter();
 wireCollapsibleSections();
 wireCtxMenu();
