@@ -563,7 +563,11 @@ ipcMain.handle('git:discardAll', async (_event, tracked, untracked) => {
 });
 // `restore --staged` unstages both modified and newly-added files without touching the worktree
 ipcMain.handle('git:unstage', (_event, paths) => git.raw(['restore', '--staged', '--', ...paths]));
-ipcMain.handle('git:commit', (_event, message) => git.commit(message));
+// --amend folds the staged changes (and the new message) into HEAD instead of
+// adding a commit; the renderer only offers it while HEAD is still unpushed
+ipcMain.handle('git:commit', (_event, message, amend) => git.commit(message, amend ? ['--amend'] : []));
+// HEAD's full message (%B = subject + body) — pre-fills the commit box when amending
+ipcMain.handle('git:headMessage', () => git.raw(['log', '-1', '--format=%B']).catch(() => ''));
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null); // no File/Edit/View/Window — the app doesn't use it

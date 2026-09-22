@@ -757,6 +757,7 @@ let wipChangedCount = 0;
 const wipText = () => {
   const summary = document.getElementById('commit-summary').value.trim();
   const files = `${wipChangedCount} file${wipChangedCount === 1 ? '' : 's'} changed`;
+  if (amendMode) return summary ? `${summary} — ${files}, folded into the last commit` : `${files} — folding into the last commit`;
   return summary ? `${summary} — ${files}` : `${files} — not committed yet`;
 };
 
@@ -831,7 +832,7 @@ const renderCommits = (log, incomingHashes, stashes, changedCount) => {
     wipChangedCount = changedCount;
     const msg = el('span', 'ghost-msg', wipText());
     msg.id = 'wip-msg';
-    main.append(msg, el('span', 'chip blue', 'WIP'));
+    main.append(msg, amendMode ? el('span', 'chip amber', 'AMEND') : el('span', 'chip blue', 'WIP'));
     row.append(
       main,
       el('span', 'commit-date', 'now'),
@@ -1045,12 +1046,55 @@ const renderFileList = (containerId, labelId, label, fileList, staged) => {
 
 let stagedCount = 0;
 
+// amend: staged changes (and the edited message) are folded into HEAD. Offered
+// only while HEAD is unpushed — rewriting a pushed commit would need a force push.
+let amendMode = false;
+let amendAllowed = false;
+let amendPrefill = null; // HEAD's message as it was put into the box, to clear it on untoggle
+
 const updateCommitButton = () => {
   const summary = document.getElementById('commit-summary').value.trim();
   const button = document.getElementById('commit-button');
-  button.disabled = !summary || stagedCount === 0;
-  button.title = stagedCount === 0 ? 'Stage some changes first'
+  button.textContent = amendMode ? 'Amend' : 'Commit';
+  button.classList.toggle('amend', amendMode);
+  // a message-only amend (nothing staged) is legitimate
+  button.disabled = !summary || (stagedCount === 0 && !amendMode);
+  button.title = stagedCount === 0 && !amendMode ? 'Stage some changes first'
     : !summary ? 'Write a summary first' : '';
+};
+
+const setAmendMode = async (on) => {
+  const summaryInput = document.getElementById('commit-summary');
+  const descriptionInput = document.getElementById('commit-description');
+  amendMode = on;
+  document.getElementById('amend-check').checked = on;
+  if (on) {
+    const [first = '', ...rest] = (await window.aurora.headMessage().catch(() => '')).trim().split('\n');
+    amendPrefill = { summary: first.trim(), description: rest.join('\n').trim() };
+    // don't clobber what the user already typed — only fill empty fields
+    if (!summaryInput.value.trim()) summaryInput.value = amendPrefill.summary;
+    if (!descriptionInput.value.trim()) descriptionInput.value = amendPrefill.description;
+  } else if (amendPrefill) {
+    // untoggling clears the pre-filled message, but keeps anything the user edited
+    if (summaryInput.value.trim() === amendPrefill.summary) summaryInput.value = '';
+    if (descriptionInput.value.trim() === amendPrefill.description) descriptionInput.value = '';
+    amendPrefill = null;
+  }
+  updateCommitButton();
+  if (lastCommitArgs) renderCommits(...lastCommitArgs);
+};
+
+const updateAmendToggle = (status, hasHead) => {
+  // ahead === 0 with an upstream means HEAD is already on the remote
+  const pushed = Boolean(status.tracking) && !(status.ahead > 0);
+  amendAllowed = hasHead && !pushed;
+  const toggle = document.getElementById('amend-toggle');
+  toggle.classList.toggle('disabled', !amendAllowed);
+  document.getElementById('amend-check').disabled = !amendAllowed;
+  toggle.title = !hasHead ? 'No commit to amend yet'
+    : pushed ? 'The last commit is already pushed — amending it would need a force push'
+    : 'Fold the staged changes and this message into the last commit';
+  if (!amendAllowed && amendMode) setAmendMode(false);
 };
 
 let lastSnapshot = '';
@@ -1113,6 +1157,7 @@ const refresh = async () => {
   syncFileView(unstaged, staged);
   markViewedRow();
   stagedCount = staged.length;
+  updateAmendToggle(status, log.length > 0);
   updateCommitButton();
 };
 
@@ -1124,14 +1169,21 @@ const wireCommitBox = () => {
     const wip = document.getElementById('wip-msg');
     if (wip) wip.textContent = wipText();
   });
+  document.getElementById('amend-check').addEventListener('change', (event) => {
+    if (event.target.checked && !amendAllowed) { event.target.checked = false; return; }
+    setAmendMode(event.target.checked);
+  });
   document.getElementById('commit-button').addEventListener('click', () => {
     const summary = summaryInput.value.trim();
     const description = descriptionInput.value.trim();
     if (!summary) return;
+    const amend = amendMode;
     act(async () => {
-      await window.aurora.commit(description ? `${summary}\n\n${description}` : summary);
+      await window.aurora.commit(description ? `${summary}\n\n${description}` : summary, amend);
       summaryInput.value = '';
       descriptionInput.value = '';
+      amendPrefill = null;
+      if (amend) setAmendMode(false);
     });
   });
 };

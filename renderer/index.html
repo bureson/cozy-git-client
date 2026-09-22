@@ -480,6 +480,16 @@
       font-size: 12.5px; font-weight: 700; cursor: pointer;
     }
     .commit-box button:disabled { background: #222839; color: #667089; cursor: default; }
+    .commit-box button.amend { background: #e5b567; color: #2a1f0c; }
+    .commit-box button.amend:disabled { background: #222839; color: #667089; }
+    .amend-toggle {
+      display: flex; align-items: center; gap: 8px; padding: 0 2px; user-select: none;
+      font-size: 11px; font-weight: 600; color: #9aa5bd; cursor: pointer;
+    }
+    .amend-toggle input { accent-color: #e5b567; margin: 0; width: 13px; height: 13px; cursor: pointer; }
+    .amend-toggle:has(input:checked) { color: #e5b567; }
+    .amend-toggle.disabled { opacity: 0.45; cursor: default; }
+    .amend-toggle.disabled input { cursor: default; }
     .fatal {
       height: 100%; display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 7px;
@@ -647,6 +657,10 @@
       <div class="commit-box">
         <input id="commit-summary" placeholder="Summary (required)">
         <textarea id="commit-description" rows="2" placeholder="Description"></textarea>
+        <label class="amend-toggle" id="amend-toggle">
+          <input type="checkbox" id="amend-check">
+          <span>Amend last commit</span>
+        </label>
         <div class="commit-error" id="commit-error"></div>
         <button id="commit-button" disabled>Commit</button>
       </div>
